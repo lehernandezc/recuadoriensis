@@ -7,4 +7,7 @@
  
  ## Instructions
  
-  - For populations genomics use popgenome.recuadoriensis.Rmd[https://github.com/lehernandezc/recuadoriensis/blob/main/popgenome.recuadoriensis.Rmd]
+  - For populations genomics use the [popgenome.recuadoriensis.Rmd](https://github.com/lehernandezc/recuadoriensis/blob/main/popgenome.recuadoriensis.Rmd) file.
+  - For outlier loci scans use the [OutFlank_script.Rmd](https://github.com/lehernandezc/recuadoriensis/blob/main/OutFlank_script.Rmd), [RandomForest_classification_script](https://github.com/lehernandezc/recuadoriensis/blob/main/RandomForest_classification_script.Rmd) and [RDA_dom_syl_script.Rmd](github.com/lehernandezc/recuadoriensis/blob/main/RDA_dom_syl_script.Rmd)
+ files.
+ - For populations genomics use the [Rga_gdistance_rhodnius_15122020_res250_allcomb_results_for_PLOS_GENETICS.Rmd](https://github.com/lehernandezc/recuadoriensis/blob/main/Rga_gdistance_rhodnius_15122020_res250_allcomb_results_for_PLOS_GENETICS.Rmd) file.
