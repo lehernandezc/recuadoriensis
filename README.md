@@ -3,7 +3,9 @@
  
  ## Description
  
- The following is the acompanying code for the PLOS Genetics research article "Population genomics and geographic dispersal in Chagas disease vectors: landscape drivers and evidence of possible adaptation to the domestic setting"
+ The following is the accompanying code for the PLOS Genetics research article "Population genomics and geographic dispersal in Chagas disease vectors: landscape drivers and evidence of possible adaptation to the domestic setting"
+ 
+ doi: pending
  
  ## Instructions
  
