@@ -1,0 +1,4214 @@
+---
+title: "Population genomics analysis in Rhodnius ecuadoriensis"
+author: "Enrique Hernandez"
+date: "17 August 2019"
+output: html_document
+---
+
+## Background
+
+The purpose of this tutorial is understanding the population dynamics of domicile/peridomicile and sylvatic populations of main Chagas disease vector, Rhodnius ecuadoriensis, in sourthern Ecuador.
+
+We will carry out conventional population analyses to test different hypothesis of geneflow among these triatomine populations.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# read in R packages
+
+library(vcfR)
+library(adegenet)
+library(hierfstat)
+library(pegas)
+library(ape)
+library(phangorn)
+library(poppr)     # Make sure poppr is loaded if you haven't done so already.
+library(magrittr)
+library(stats)
+library(ade4)
+library(phytools)
+library(mmod)
+library(raster)
+library(MASS)
+library(ecodist)
+library(ggplot2)
+library(reshape)
+library(reshape2)
+library(tidyverse)
+library(Stack)
+library(corMLPE)
+library(diveRsity)
+library(graph4lg)
+library(PopGenome)
+library(AICcmodavg)
+library(GUSbase)
+library(GUSLD)
+library(ggpubr)
+library(RVAideMemoire)
+library(piecewiseSEM)
+
+```
+
+## Read in genotype informatiom
+
+In this step, we will read in R the genotype information obtained from the STACKS pipeline. We obtained 2552 high quality variants among 272 Rhodnius ecuadoriensis samples distributed in 25 populations among loja.
+
+In addition, we will add extra information in the genind object such as population assigment, coordinates and other categories which will be useful for DAPC, AMOVA or spatial analyses.
+
+
+```{r }
+# set working directory
+setwd("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/C02_KNNimp")
+# linux cluster directory, close when not in cluster
+#setwd("~/Dropbox/Recuadoriensis_Analysis/C02_KNNimp")
+# Read  in vcf file
+rhod.vcf <- read.vcfR("./snps.loja.KNNimpR3_pophabtime.vcf")
+
+# Convert vcf to genind object
+rhod.genind <- vcfR2genind(rhod.vcf, sep = "/")
+
+# Add population map from sample information file.
+rhod.info <- read.csv("./C02KNNimpR3_pophabtime_strata.csv")
+popmap <- as.factor(as.vector(rhod.info$pop))
+rhod.genind@pop <- popmap
+rhod.genind
+
+# Add the samples coordinates in UTM from information file.
+xy <- cbind(rhod.info$X_point, rhod.info$Y_point)
+rhod.genind@other$xy <- as.data.frame(xy)
+rhod.genind
+
+# Append information file as strata in the genind object
+
+strata(rhod.genind) <- rhod.info
+rhod.genind
+
+```
+
+## Obtain each populations basic stats using diveRsity
+
+
+```{r}
+rhod.genepop <- genind_to_genepop(rhod.genind)
+
+rhod.genepop
+
+write.table(rhod.genepop, file = "rhod.genepop.txt", quote=FALSE, row.names=FALSE, col.names=FALSE)
+
+divBasic("./rhod.genepop.txt", outfile = "rhod.basic.stats", bootstraps = 1000)
+
+
+
+# compare with PopGenReport
+
+rhod.popgenreport <- allel.rich(rhod.genind)
+
+# save in ./rhod.basic.stats.PopGenReport
+write_csv(as.data.frame(rhod.popgenreport$all.richness), file = "rhod.pop.popgenreport.all.richness.csv")
+write_csv(as.data.frame(rhod.popgenreport$sum.richness), file = "rhod.pop.popgenreport.sum.richness.csv")
+write_csv(as.data.frame(rhod.popgenreport$mean.richness), file = "rhod.pop.popgenreport.mean.richness.csv")
+write_csv(as.data.frame(rhod.popgenreport$alleles.sampled), file = "rhod.pop.popgenreport.alleles.sampled.csv")
+write_csv(as.data.frame(rhod.popgenreport$pop.sizes), file = "rhod.pop.popgenreport.pop.sizes.csv")
+
+
+
+
+```
+
+## calculate collection sites with dom and syl populations using divRsity
+
+
+```{r}
+
+
+rhod.domsyl <- popsub(rhod.genind, blacklist=c("SF", "LM", "AH", "ND", "HG", "TC", "VC", "BM", "GA", "EX", "YS", "TR", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+# Change the population map with the approrpiate domicile and sylvatic category.
+popmap.hab <- as.factor(as.vector(rhod.domsyl@strata$pophab))
+rhod.domsyl@pop <- popmap.hab
+
+rhod.domsyl.genepop <- genind_to_genepop(rhod.domsyl)
+
+rhod.domsyl.genepop
+
+write.table(rhod.domsyl.genepop, file = "rhod.domsyl.genepop.txt", quote=FALSE, row.names=FALSE, col.names=FALSE)
+
+divBasic("./rhod.domsyl.genepop.txt", outfile = "rhod.domsyl.basic.stats", bootstraps = 1000)
+
+
+
+# compare with PopGenReport
+
+rhod.domsyl.popgenreport <- allel.rich(rhod.domsyl)
+
+# save in ./rhod.basic.stats.PopGenReport
+write_csv(as.data.frame(rhod.domsyl.popgenreport$all.richness), file = "rhod.domsyl.popgenreport.all.richness.csv")
+write_csv(as.data.frame(rhod.domsyl.popgenreport$sum.richness), file = "rhod.domsyl.popgenreport.sum.richness.csv")
+write_csv(as.data.frame(rhod.domsyl.popgenreport$mean.richness), file = "rhod.domsyl.popgenreport.mean.richness.csv")
+write_csv(as.data.frame(rhod.domsyl.popgenreport$alleles.sampled), file = "rhod.domsyl.popgenreport.alleles.sampled.csv")
+write_csv(as.data.frame(rhod.domsyl.popgenreport$pop.sizes), file = "rhod.domsyl.popgenreport.pop.sizes.csv")
+
+
+
+##  Test for differences in Allelic richness from PopGenReport
+## BR
+
+BRdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,1]))
+BRdom <- mutate(BRdom, population = "BRdom")
+BRsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,2]))
+BRsyl <- mutate(BRsyl, population = "BRsyl")
+BR_df <- as_tibble(rbind(BRdom, BRsyl))
+
+perm.t.test(value ~ population, data = BR_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -8.8011, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+##sample estimates:
+#mean in group BRdom mean in group BRsyl 
+#           1.300098            1.387051
+
+## CE
+
+CEdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,3]))
+CEdom <- mutate(CEdom, population = "CEdom")
+CEsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,4]))
+CEsyl <- mutate(CEsyl, population = "CEsyl")
+CE_df <- as_tibble(rbind(CEdom, CEsyl))
+
+perm.t.test(value ~ population, data = CE_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -3.0018, p-value = 0.0028
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CEdom mean in group CEsyl 
+#           1.282509            1.314571 
+
+
+## CG
+
+CGdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,5]))
+CGdom <- mutate(CGdom, population = "CGdom")
+CGsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,6]))
+CGsyl <- mutate(CGsyl, population = "CGsyl")
+CG_df <- as_tibble(rbind(CGdom, CGsyl))
+
+perm.t.test(value ~ population, data = CG_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -1.6648, p-value = 0.09159
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CGdom mean in group CGsyl 
+#           1.360400            1.377492
+
+## CQ
+
+CQdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,7]))
+CQdom <- mutate(CQdom, population = "CQdom")
+CQsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,8]))
+CQsyl <- mutate(CQsyl, population = "CQsyl")
+CQ_df <- as_tibble(rbind(CQdom, CQsyl))
+
+perm.t.test(value ~ population, data = CQ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 6.6059, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CQdom mean in group CQsyl 
+#           1.340938            1.270880
+
+## GL
+
+GLdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,9]))
+GLdom <- mutate(GLdom, population = "GLdom")
+GLsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,10]))
+GLsyl <- mutate(GLsyl, population = "GLsyl")
+GL_df <- as_tibble(rbind(GLdom, GLsyl))
+
+perm.t.test(value ~ population, data = GL_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -8.4838, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group GLdom mean in group GLsyl 
+#           1.261907            1.351793 
+           
+           
+## HY
+
+HYdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,11]))
+HYdom <- mutate(HYdom, population = "HYdom")
+HYsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,12]))
+HYsyl <- mutate(HYsyl, population = "HYsyl")
+HY_df <- as_tibble(rbind(HYdom, HYsyl))
+
+perm.t.test(value ~ population, data = HY_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -4.6673, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group HYdom mean in group HYsyl 
+#           1.206059            1.249873
+
+
+## SJ
+
+SJdom <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,13]))
+SJdom <- mutate(SJdom, population = "SJdom")
+SJsyl <- as_tibble(as.vector(rhod.domsyl.popgenreport$all.richness[,14]))
+SJsyl <- mutate(SJsyl, population = "SJsyl")
+SJ_df <- as_tibble(rbind(SJdom, SJsyl))
+
+perm.t.test(value ~ population, data = SJ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 0.15441, p-value = 0.8603
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group SJdom mean in group SJsyl 
+#           1.210760            1.209374 
+
+
+```
+
+
+##A) Investigate gene flow between domicile and sylvatic habitats.
+
+Calculate alpha diversity stats for different group categories: population, habitat and time of collection within communities
+
+1 Domicile and sylvatic samples of groups within the 7 communities with samples from both habitats
+
+
+
+
+```{r}
+
+# Remove communities without samples collected in both habitats (domicile and sylvatic).
+rhod.domsyl <- popsub(rhod.genind, blacklist=c("SF", "LM", "AH", "ND", "HG", "TC", "VC", "BM", "GA", "EX", "YS", "TR", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+# Change the population map with the approrpiate domicile and sylvatic category.
+popmap.hab <- as.factor(as.vector(rhod.domsyl@strata$pophab))
+rhod.domsyl@pop <- popmap.hab
+
+# Basic information about the data. e.g
+rhod.sum <- summary(rhod.domsyl)
+
+# calculate per locus observed and expected heterozygocity {hierfstat}
+rhod.bs <- basic.stats(rhod.domsyl, diploid = TRUE, digits = 2)
+# Calculate Alleic richness
+rhod.ar<- allelic.richness(rhod.domsyl)
+#$overall
+#   Ho    Hs    Ht   Dst   Htp  Dstp   Fst  Fstp   Fis  Dest 
+#  0.18  0.17  0.22  0.05  0.23  0.05  0.23  0.24 -0.02  0.07
+
+wc(rhod.domsyl)
+#$FST
+#[1] 0.27404
+#$FIS
+#[1] -0.02670102
+
+# Calculate average Observed heterozygosity per population
+mean(rhod.bs$Ho[,1])
+# Expected heterozygosity Hs
+mean(rhod.bs$Hs[,1])
+# Calculating mean Fis per population
+mean(rhod.bs$Fis[,1], na.rm=T)
+#mean allelic richness by population
+mean(rhod.ar$Ar[,1])
+# Calculate loci on HWE
+temp.domsyl <- seppop(rhod.domsyl, pop=rhod.domsyl@pop)
+
+br.dom <- hw.test(temp.domsyl$BRdom, B=0) # 0.9137931
+br.syl <- hw.test(temp.domsyl$BRsyl, B=0) # 0.9098746
+
+ce.dom <- hw.test(temp.domsyl$CEdom, B=0) # 0.9188871
+ce.syl <- hw.test(temp.domsyl$CEsyl, B=0) # 1
+
+cg.dom <- hw.test(temp.domsyl$CGdom, B=0) # 0.9251567
+cg.syl <- hw.test(temp.domsyl$CGsyl, B=0) # 0.9224138
+
+cq.dom <- hw.test(temp.domsyl$CQdom, B=0) # 0.8981191
+cq.syl <- hw.test(temp.domsyl$CQsyl, B=0) # 1
+
+gl.dom <- hw.test(temp.domsyl$GLdom, B=0) # 1
+gl.syl <- hw.test(temp.domsyl$GLsyl, B=0) # 0.9286834
+
+hy.dom <- hw.test(temp.domsyl$HYdom, B=0) # 0.9310345
+hy.syl <- hw.test(temp.domsyl$HYsyl, B=0) # 1
+
+sj.dom <- hw.test(temp.domsyl$SJdom, B=0)  # 0.9392633
+sj.syl <- hw.test(temp.domsyl$SJsyl, B=0)  # 0.9451411
+
+# % of locus in HWE proportions
+
+length(which(br.dom[,3]>0.05))/length(br.dom[,3]) # 0.0.914
+
+
+
+boot.ppfis(rhod.domsyl) 
+
+
+
+###########################################
+#####    randomisatio test between domestic and sylvatic populations.
+####
+######################
+####  Observed heterosaigosity 
+####
+###################################
+
+## BR
+
+BRdom <- as_tibble(as.vector(rhod.bs$Ho[,1]))
+BRdom <- mutate(BRdom, population = "BRdom")
+BRsyl <- as_tibble(as.vector(rhod.bs$Ho[,2]))
+BRsyl <- mutate(BRsyl, population = "BRsyl")
+
+BR_df <- as_tibble(Stack(BRdom, BRsyl))
+
+ggplot(BR_df, aes(x= value, fill=population))+
+    ylab("Loci") + xlab("Observed heterozygosities - Ho") +
+    geom_histogram(bins = 30, colour = "black") +
+    geom_vline(data = filter(BR_df, population == "BRdom"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "red") +
+    geom_vline(data = filter(BR_df, population == "BRsyl"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "blue") +
+    theme_classic()
+
+t.test(value ~ population, data = BR_df, alternative = "two.sided")
+perm.t.test(value ~ population, data = BR_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -10.576, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group BRdom mean in group BRsyl 
+#          0.1557092           0.2320337 
+
+##############
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+
+nreps = 10000 # 5000 iterations
+
+for(i in 1:nreps){
+    
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- BR_df 
+    
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "BRdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "BRsyl") 
+                             %>% pull(value))
+    
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1557092 - 0.2320337
+# -0.0763245
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# [1] 0
+
+
+
+###############
+#### CE
+
+CEdom <- as_tibble(as.vector(rhod.bs$Ho[,3]))
+CEdom <- mutate(CEdom, population = "CEdom")
+CEsyl <- as_tibble(as.vector(rhod.bs$Ho[,4]))
+CEsyl <- mutate(CEsyl, population = "CEsyl")
+CE_df <- as_tibble(Stack(CEdom, CEsyl))
+
+t.test(value ~ population, data = CE_df, alternative = "two.sided")
+#t = -4.9597, df = 4794.5, p-value = 7.303e-07
+perm.t.test(value ~ population, data = CE_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#	Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -4.9597, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CEdom mean in group CEsyl 
+#          0.1562108           0.1953370 
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 5000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CE_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CEdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CEsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1562108 - 0.1953370
+
+ggplot() +
+    ylab("Count") + xlab("Simulated mean difference") +
+    geom_histogram(aes(x = simulated_means), bins = 30, 
+                   fill = "grey", alpha = 0.4, colour = "black") +
+    geom_vline(xintercept = diff_means_obs, size = 1, 
+               linetype = "dashed", colour = "black") + 
+    theme_classic()
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0
+
+
+###############
+#### CG
+
+CGdom <- as_tibble(as.vector(rhod.bs$Ho[,5]))
+CGdom <- mutate(CGdom, population = "CGdom")
+CGsyl <- as_tibble(as.vector(rhod.bs$Ho[,6]))
+CGsyl <- mutate(CGsyl, population = "CGsyl")
+CG_df <- as_tibble(Stack(CGdom, CGsyl))
+
+t.test(value ~ population, data = CG_df, alternative = "two.sided")
+# t = -3.1668, df = 5037.6, p-value = 0.001551
+
+perm.t.test(value ~ population, data = CG_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -3.1668, p-value = 0.0005999
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CGdom mean in group CGsyl 
+#          0.2066614           0.2308973 
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CG_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CGdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CGsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.2066614 - 0.2308973
+
+ggplot() +
+    ylab("Count") + xlab("Simulated mean difference") +
+    geom_histogram(aes(x = simulated_means), bins = 30, 
+                   fill = "grey", alpha = 0.4, colour = "black") +
+    geom_vline(xintercept = diff_means_obs, size = 1, 
+               linetype = "dashed", colour = "black") + 
+    theme_classic()
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.0022
+
+
+####
+# CQ
+
+CQdom <- as_tibble(as.vector(rhod.bs$Ho[,7]))
+CQdom <- mutate(CQdom, population = "CQdom")
+CQsyl <- as_tibble(as.vector(rhod.bs$Ho[,8]))
+CQsyl <- mutate(CQsyl, population = "CQsyl")
+CQ_df <- as_tibble(Stack(CQdom, CQsyl))
+
+t.test(value ~ population, data = CQ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = CQ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 0.68653, p-value = 0.4828
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CQdom mean in group CQsyl 
+#          0.1769671           0.1716301
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CQ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CQdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CQsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1769671 - 0.1716301
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0.491
+
+
+
+
+####
+# GL
+
+GLdom <- as_tibble(as.vector(rhod.bs$Ho[,9]))
+GLdom <- mutate(GLdom, population = "GLdom")
+GLsyl <- as_tibble(as.vector(rhod.bs$Ho[,10]))
+GLsyl <- mutate(GLsyl, population = "GLsyl")
+GL_df <- as_tibble(Stack(GLdom, GLsyl))
+
+t.test(value ~ population, data = GL_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = GL_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -4.1832, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group GLdom mean in group GLsyl 
+#          0.1649765           0.1983621 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- GL_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "GLdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "GLsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1649765  - 0.1983621
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#1e-04
+
+
+####
+# HY
+
+HYdom <- as_tibble(as.vector(rhod.bs$Ho[,11]))
+HYdom <- mutate(HYdom, population = "HYdom")
+HYsyl <- as_tibble(as.vector(rhod.bs$Ho[,12]))
+HYsyl <- mutate(HYsyl, population = "HYsyl")
+HY_df <- as_tibble(Stack(HYdom, HYsyl))
+
+t.test(value ~ population, data = HY_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = HY_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -6.6636, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group HYdom mean in group HYsyl 
+#          0.1240361           0.1730055  
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- HY_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "HYdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "HYsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1240361 - 0.1730055
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+
+####
+# SJ
+
+SJdom <- as_tibble(as.vector(rhod.bs$Ho[,13]))
+SJdom <- mutate(SJdom, population = "SJdom")
+SJsyl <- as_tibble(as.vector(rhod.bs$Ho[,14]))
+SJsyl <- mutate(SJsyl, population = "SJsyl")
+SJ_df <- as_tibble(Stack(SJdom, SJsyl))
+
+t.test(value ~ population, data = SJ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = SJ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 0.21222, p-value = 0.8279
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group SJdom mean in group SJsyl 
+#          0.1416144           0.1400980  
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- SJ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "SJdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "SJsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <-  0.1416144 - 0.1400980 
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.835
+
+
+######################
+####  Expected heterosigosity 
+####
+###################################
+
+## BR
+
+BRdom <- as_tibble(as.vector(rhod.bs$Hs[,1]))
+BRdom <- mutate(BRdom, population = "BRdom")
+BRsyl <- as_tibble(as.vector(rhod.bs$Hs[,2]))
+BRsyl <- mutate(BRsyl, population = "BRsyl")
+BR_df <- as_tibble(Stack(BRdom, BRsyl))
+
+ggplot(BR_df, aes(x= value, fill=population))+
+    ylab("Loci") + xlab("Observed heterozygosities - Ho") +
+    geom_histogram(bins = 30, colour = "black") +
+    geom_vline(data = filter(BR_df, population == "BRdom"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "red") +
+    geom_vline(data = filter(BR_df, population == "BRsyl"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "blue") +
+    theme_classic()
+
+t.test(value ~ population, data = BR_df, alternative = "two.sided")
+perm.t.test(value ~ population, data = BR_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -7.7488, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group BRdom mean in group BRsyl 
+#          0.1741889           0.2190987 
+
+##############
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+
+nreps = 10000 # 5000 iterations
+
+for(i in 1:nreps){
+    
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- BR_df 
+    
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "BRdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "BRsyl") 
+                             %>% pull(value))
+    
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1741889 - 0.2190987 
+# -0.0763245
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# [1] 0
+
+
+
+###############
+#### CE
+
+CEdom <- as_tibble(as.vector(rhod.bs$Hs[,3]))
+CEdom <- mutate(CEdom, population = "CEdom")
+CEsyl <- as_tibble(as.vector(rhod.bs$Hs[,4]))
+CEsyl <- mutate(CEsyl, population = "CEsyl")
+CE_df <- as_tibble(Stack(CEdom, CEsyl))
+
+t.test(value ~ population, data = CE_df, alternative = "two.sided")
+#t = -4.9597, df = 4794.5, p-value = 7.303e-07
+perm.t.test(value ~ population, data = CE_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#	Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -7.232, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CEdom mean in group CEsyl 
+#          0.1610541           0.2125784 
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CE_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CEdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CEsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.1610541 - 0.2125784
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+###############
+#### CG
+
+CGdom <- as_tibble(as.vector(rhod.bs$Hs[,5]))
+CGdom <- mutate(CGdom, population = "CGdom")
+CGsyl <- as_tibble(as.vector(rhod.bs$Hs[,6]))
+CGsyl <- mutate(CGsyl, population = "CGsyl")
+CG_df <- as_tibble(Stack(CGdom, CGsyl))
+
+t.test(value ~ population, data = CG_df, alternative = "two.sided")
+
+
+perm.t.test(value ~ population, data = CG_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -3.0187, p-value = 0.0026
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CGdom mean in group CGsyl 
+#          0.2057837           0.2242594 
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CG_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CGdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CGsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <- 0.2057837 - 0.2242594
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.0019
+
+
+####
+# CQ
+
+CQdom <- as_tibble(as.vector(rhod.bs$Hs[,7]))
+CQdom <- mutate(CQdom, population = "CQdom")
+CQsyl <- as_tibble(as.vector(rhod.bs$Hs[,8]))
+CQsyl <- mutate(CQsyl, population = "CQsyl")
+CQ_df <- as_tibble(Stack(CQdom, CQsyl))
+
+t.test(value ~ population, data = CQ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = CQ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 1.8986, p-value = 0.05579
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CQdom mean in group CQsyl 
+#          0.1953174           0.1820141 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CQ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CQdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CQsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <-  0.1953174  - 0.1820141 
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0.0599
+
+
+
+
+####
+# GL
+
+GLdom <- as_tibble(as.vector(rhod.bs$Hs[,9]))
+GLdom <- mutate(GLdom, population = "GLdom")
+GLsyl <- as_tibble(as.vector(rhod.bs$Hs[,10]))
+GLsyl <- mutate(GLsyl, population = "GLsyl")
+GL_df <- as_tibble(Stack(GLdom, GLsyl))
+
+t.test(value ~ population, data = GL_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = GL_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -8.2027, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group GLdom mean in group GLsyl 
+#          0.1600157           0.2144788 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- GL_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "GLdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "GLsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <-0.1600157 -  0.2144788
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0
+
+
+####
+# HY
+
+HYdom <- as_tibble(as.vector(rhod.bs$Hs[,11]))
+HYdom <- mutate(HYdom, population = "HYdom")
+HYsyl <- as_tibble(as.vector(rhod.bs$Hs[,12]))
+HYsyl <- mutate(HYsyl, population = "HYsyl")
+HY_df <- as_tibble(Stack(HYdom, HYsyl))
+
+t.test(value ~ population, data = HY_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = HY_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -5.3656, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group HYdom mean in group HYsyl 
+#          0.1164420           0.1457994 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- HY_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "HYdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "HYsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <-  0.1164420    -       0.1457994
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+
+####
+# SJ
+
+SJdom <- as_tibble(as.vector(rhod.bs$Hs[,13]))
+SJdom <- mutate(SJdom, population = "SJdom")
+SJsyl <- as_tibble(as.vector(rhod.bs$Hs[,14]))
+SJsyl <- mutate(SJsyl, population = "SJsyl")
+SJ_df <- as_tibble(Stack(SJdom, SJsyl))
+
+t.test(value ~ population, data = SJ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = SJ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#10000 permutations
+#t = 0.039822, p-value = 0.9845
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group SJdom mean in group SJsyl 
+#          0.1182602           0.1180564 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- SJ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "SJdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "SJsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+diff_means_obs <-  0.1182602  -  0.1180564 
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.9663
+
+
+
+########################################################
+####
+####  Fis 
+####
+###################################
+
+## BR
+
+BRdom <- as_tibble(as.vector(rhod.bs$Fis[,1]))
+BRdom <- mutate(BRdom, population = "BRdom")
+BRsyl <- as_tibble(as.vector(rhod.bs$Fis[,2]))
+BRsyl <- mutate(BRsyl, population = "BRsyl")
+BR_df <- as_tibble(Stack(BRdom, BRsyl))
+
+ggplot(BR_df, aes(x= value, fill=population))+
+    ylab("Loci") + xlab("Observed heterozygosities - Ho") +
+    geom_histogram(bins = 30, colour = "black") +
+    geom_vline(data = filter(BR_df, population == "BRdom"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "red") +
+    geom_vline(data = filter(BR_df, population == "BRsyl"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "blue") +
+    theme_classic()
+
+t.test(value ~ population, data = BR_df, alternative = "two.sided")
+perm.t.test(value ~ population, data = BR_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 7.4276, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group BRdom mean in group BRsyl 
+#         0.09788364         -0.03373479 
+
+##############
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+
+nreps = 10000 # 5000 iterations
+
+for(i in 1:nreps){
+    
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- BR_df 
+    
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "BRdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "BRsyl") 
+                             %>% pull(value), na.rm=T)
+    
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_BRdom <- mean(BR_df %>% filter(population == "BRdom") 
+                           %>% pull(value), na.rm=T)
+mean_BRsyl <- mean(BR_df %>% filter(population == "BRsyl") 
+                             %>% pull(value), na.rm=T)
+
+
+diff_means_obs <- mean_BRdom -  mean_BRsyl
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# [1]0
+
+
+
+
+###############
+#### CE
+
+CEdom <- as_tibble(as.vector(rhod.bs$Fis[,3]))
+CEdom <- mutate(CEdom, population = "CEdom")
+CEsyl <- as_tibble(as.vector(rhod.bs$Fis[,4]))
+CEsyl <- mutate(CEsyl, population = "CEsyl")
+CE_df <- as_tibble(Stack(CEdom, CEsyl))
+
+t.test(value ~ population, data = CE_df, alternative = "two.sided")
+#t = -4.9597, df = 4794.5, p-value = 7.303e-07
+perm.t.test(value ~ population, data = CE_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#	Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 4.7211, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CEdom mean in group CEsyl 
+#         0.04642217         -0.06176784 
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CE_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CEdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CEsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_CEdom <- mean(CE_df %>% filter(population == "CEdom") 
+                           %>% pull(value), na.rm=T)
+mean_CEsyl <- mean(CE_df %>% filter(population == "CEsyl") 
+                             %>% pull(value), na.rm=T)
+
+
+
+diff_means_obs <- mean_CEdom - mean_CEsyl
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+###############
+#### CG
+
+CGdom <- as_tibble(as.vector(rhod.bs$Fis[,5]))
+CGdom <- mutate(CGdom, population = "CGdom")
+CGsyl <- as_tibble(as.vector(rhod.bs$Fis[,6]))
+CGsyl <- mutate(CGsyl, population = "CGsyl")
+CG_df <- as_tibble(Stack(CGdom, CGsyl))
+
+t.test(value ~ population, data = CG_df, alternative = "two.sided")
+
+
+perm.t.test(value ~ population, data = CG_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 3.4811, p-value = 4e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CGdom mean in group CGsyl 
+#        0.006835616        -0.052172662 
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CG_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CGdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CGsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_CEdom <- mean(CE_df %>% filter(population == "CEdom") 
+                           %>% pull(value), na.rm=T)
+mean_CEsyl <- mean(CE_df %>% filter(population == "CEsyl") 
+                             %>% pull(value), na.rm=T)
+
+
+
+diff_means_obs <- mean_CEdom - mean_CEsyl
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.0019
+
+
+####
+# CQ
+
+CQdom <- as_tibble(as.vector(rhod.bs$Fis[,7]))
+CQdom <- mutate(CQdom, population = "CQdom")
+CQsyl <- as_tibble(as.vector(rhod.bs$Fis[,8]))
+CQsyl <- mutate(CQsyl, population = "CQsyl")
+CQ_df <- as_tibble(Stack(CQdom, CQsyl))
+
+t.test(value ~ population, data = CQ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = CQ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 7.4273, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CQdom mean in group CQsyl 
+#         0.08188276         -0.09090909  
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CQ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CQdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CQsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_CQdom <- mean(CQ_df %>% filter(population == "CQdom") 
+                           %>% pull(value), na.rm=T)
+mean_CQsyl <- mean(CQ_df %>% filter(population == "CQsyl") 
+                             %>% pull(value), na.rm=T)
+
+diff_means_obs <-  mean_CQdom  - mean_CQsyl 
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0
+
+
+####
+# GL
+
+GLdom <- as_tibble(as.vector(rhod.bs$Fis[,9]))
+GLdom <- mutate(GLdom, population = "GLdom")
+GLsyl <- as_tibble(as.vector(rhod.bs$Fis[,10]))
+GLsyl <- mutate(GLsyl, population = "GLsyl")
+GL_df <- as_tibble(Stack(GLdom, GLsyl))
+
+t.test(value ~ population, data = GL_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = GL_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -4.3332, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group GLdom mean in group GLsyl 
+#        -0.08298266          0.02215873 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- GL_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "GLdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "GLsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_GLdom <- mean(GL_df %>% filter(population == "GLdom") 
+                           %>% pull(value), na.rm=T)
+mean_GLsyl <- mean(GL_df %>% filter(population == "GLsyl") 
+                             %>% pull(value), na.rm=T)
+
+diff_means_obs <- -0.1051414
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#1
+
+
+####
+# HY
+
+HYdom <- as_tibble(as.vector(rhod.bs$Fis[,11]))
+HYdom <- mutate(HYdom, population = "HYdom")
+HYsyl <- as_tibble(as.vector(rhod.bs$Fis[,12]))
+HYsyl <- mutate(HYsyl, population = "HYsyl")
+HY_df <- as_tibble(Stack(HYdom, HYsyl))
+
+t.test(value ~ population, data = HY_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = HY_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 7.3065, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group HYdom mean in group HYsyl 
+#        -0.01592911         -0.17443195  
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- HY_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "HYdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "HYsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_HYdom <- mean(HY_df %>% filter(population == "HYdom") 
+                           %>% pull(value), na.rm=T)
+mean_HYsyl <- mean(HY_df %>% filter(population == "HYsyl") 
+                             %>% pull(value), na.rm=T)
+
+diff_means_obs <-  mean_HYdom - mean_HYsyl
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+
+####
+# SJ
+
+SJdom <- as_tibble(as.vector(rhod.bs$Fis[,13]))
+SJdom <- mutate(SJdom, population = "SJdom")
+SJsyl <- as_tibble(as.vector(rhod.bs$Fis[,14]))
+SJsyl <- mutate(SJsyl, population = "SJsyl")
+SJ_df <- as_tibble(Stack(SJdom, SJsyl))
+
+t.test(value ~ population, data = SJ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = SJ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#10000 permutations
+#t = 0.49935, p-value = 0.6361
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group SJdom mean in group SJsyl 
+#         -0.1181607          -0.1281054 
+
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- SJ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "SJdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "SJsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_SJdom <- mean(SJ_df %>% filter(population == "SJdom") 
+                           %>% pull(value), na.rm=T)
+mean_SJsyl <- mean(SJ_df %>% filter(population == "SJsyl") 
+                             %>% pull(value), na.rm=T)
+
+diff_means_obs <-  mean_SJdom  -  mean_SJsyl 
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.6111
+
+
+
+
+########################################################
+####
+####  Allelic richness 
+####
+###################################
+
+## BR
+
+BRdom <- as_tibble(as.vector(rhod.ar$Ar[,1]))
+BRdom <- mutate(BRdom, population = "BRdom")
+BRsyl <- as_tibble(as.vector(rhod.ar$Ar[,2]))
+BRsyl <- mutate(BRsyl, population = "BRsyl")
+BR_df <- as_tibble(Stack(BRdom, BRsyl))
+
+ggplot(BR_df, aes(x= value, fill=population))+
+    ylab("Loci") + xlab("Observed heterozygosities - Ho") +
+    geom_histogram(bins = 30, colour = "black") +
+    geom_vline(data = filter(BR_df, population == "BRdom"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "red") +
+    geom_vline(data = filter(BR_df, population == "BRsyl"), aes(xintercept = mean(value)),
+               size = 1, linetype = "dashed", colour = "blue") +
+    theme_classic()
+
+t.test(value ~ population, data = BR_df, alternative = "two.sided")
+perm.t.test(value ~ population, data = BR_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -8.6904, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group BRdom mean in group BRsyl 
+#           1.311909            1.400584 
+
+##############
+
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+
+nreps = 10000 # 5000 iterations
+
+for(i in 1:nreps){
+    
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- BR_df 
+    
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "BRdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "BRsyl") 
+                             %>% pull(value))
+    
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_BRdom <- mean(BR_df %>% filter(population == "BRdom") 
+                           %>% pull(value), na.rm=T)
+mean_BRsyl <- mean(BR_df %>% filter(population == "BRsyl") 
+                             %>% pull(value), na.rm=T)
+
+
+diff_means_obs <- mean_BRdom -  mean_BRsyl
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# [1]0
+
+
+
+
+###############
+#### CE
+
+CEdom <- as_tibble(as.vector(rhod.ar$Ar[,3]))
+CEdom <- mutate(CEdom, population = "CEdom")
+CEsyl <- as_tibble(as.vector(rhod.ar$Ar[,4]))
+CEsyl <- mutate(CEsyl, population = "CEsyl")
+CE_df <- as_tibble(Stack(CEdom, CEsyl))
+
+t.test(value ~ population, data = CE_df, alternative = "two.sided")
+#t = -4.9597, df = 4794.5, p-value = 7.303e-07
+perm.t.test(value ~ population, data = CE_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#	Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -6.4911, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CEdom mean in group CEsyl 
+#           1.291144            1.367947
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CE_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CEdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CEsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_CEdom <- mean(CE_df %>% filter(population == "CEdom") 
+                           %>% pull(value), na.rm=T)
+mean_CEsyl <- mean(CE_df %>% filter(population == "CEsyl") 
+                             %>% pull(value), na.rm=T)
+
+
+
+diff_means_obs <-  1.291144   -   1.367947
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+###############
+#### CG
+
+CGdom <- as_tibble(as.vector(rhod.ar$Ar[,5]))
+CGdom <- mutate(CGdom, population = "CGdom")
+CGsyl <- as_tibble(as.vector(rhod.ar$Ar[,6]))
+CGsyl <- mutate(CGsyl, population = "CGsyl")
+CG_df <- as_tibble(Stack(CGdom, CGsyl))
+
+t.test(value ~ population, data = CG_df, alternative = "two.sided")
+
+
+perm.t.test(value ~ population, data = CG_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -3.3981, p-value = 0.0014
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CGdom mean in group CGsyl 
+#           1.371226            1.407831 
+
+# Initialize a list to store the simulated test-statistics
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CG_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CGdom") 
+                           %>% pull(value), na.rm=T)
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CGsyl") 
+                             %>% pull(value), na.rm=T)
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_CGdom <- mean(CG_df %>% filter(population == "CGdom") 
+                           %>% pull(value))
+mean_CGsyl <- mean(CG_df %>% filter(population == "CGsyl") 
+                             %>% pull(value))
+
+
+
+diff_means_obs <- 1.371226  -   1.407831
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+# 0.001
+
+
+####
+# CQ
+
+CQdom <- as_tibble(as.vector(rhod.ar$Ar[,7]))
+CQdom <- mutate(CQdom, population = "CQdom")
+CQsyl <- as_tibble(as.vector(rhod.ar$Ar[,8]))
+CQsyl <- mutate(CQsyl, population = "CQsyl")
+CQ_df <- as_tibble(Stack(CQdom, CQsyl))
+
+t.test(value ~ population, data = CQ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = CQ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = 3.143, p-value = 0.0024
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group CQdom mean in group CQsyl 
+#           1.351306            1.314655 
+
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- CQ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "CQdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "CQsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_CQdom <- mean(CQ_df %>% filter(population == "CQdom") 
+                           %>% pull(value))
+mean_CQsyl <- mean(CQ_df %>% filter(population == "CQsyl") 
+                             %>% pull(value))
+
+diff_means_obs <-  1.351306   -  1.314655 
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0.001
+
+
+####
+# GL
+
+GLdom <- as_tibble(as.vector(rhod.ar$Ar[,9]))
+GLdom <- mutate(GLdom, population = "GLdom")
+GLsyl <- as_tibble(as.vector(rhod.ar$Ar[,10]))
+GLsyl <- mutate(GLsyl, population = "GLsyl")
+GL_df <- as_tibble(Stack(GLdom, GLsyl))
+
+t.test(value ~ population, data = GL_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = GL_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -8.1027, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group GLdom mean in group GLsyl 
+#           1.288297            1.381279 
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- GL_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "GLdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "GLsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_GLdom <- mean(GL_df %>% filter(population == "GLdom") 
+                           %>% pull(value))
+mean_GLsyl <- mean(GL_df %>% filter(population == "GLsyl") 
+                             %>% pull(value))
+
+diff_means_obs <- 1.288297  -     1.381279 
+
+
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0
+
+
+####
+# HY
+
+HYdom <- as_tibble(as.vector(rhod.ar$Ar[,11]))
+HYdom <- mutate(HYdom, population = "HYdom")
+HYsyl <- as_tibble(as.vector(rhod.ar$Ar[,12]))
+HYsyl <- mutate(HYsyl, population = "HYsyl")
+HY_df <- as_tibble(Stack(HYdom, HYsyl))
+
+t.test(value ~ population, data = HY_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = HY_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#data:  value by population
+#10000 permutations
+#t = -6.6018, p-value = 2e-04
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group HYdom mean in group HYsyl 
+#           1.211981            1.278213   
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- HY_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "HYdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "HYsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+mean_HYdom <- mean(HY_df %>% filter(population == "HYdom") 
+                           %>% pull(value))
+mean_HYsyl <- mean(HY_df %>% filter(population == "HYsyl") 
+                             %>% pull(value))
+
+diff_means_obs <-  1.211981      -  1.278213  
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#[1] 0
+
+
+
+####
+# SJ
+
+SJdom <- as_tibble(as.vector(rhod.ar$Ar[,13]))
+SJdom <- mutate(SJdom, population = "SJdom")
+SJsyl <- as_tibble(as.vector(rhod.ar$Ar[,14]))
+SJsyl <- mutate(SJsyl, population = "SJsyl")
+SJ_df <- as_tibble(Stack(SJdom, SJsyl))
+
+t.test(value ~ population, data = SJ_df, alternative = "two.sided")
+# t = 0.68653, df = 4830.8, p-value = 0.4924
+
+
+perm.t.test(value ~ population, data = SJ_df, alternative = "two.sided", paired = FALSE, nperm = 10000)
+
+#Permutation Two Sample t-test
+
+#10000 permutations
+#t = 0.090032, p-value = 0.9217
+#alternative hypothesis: true difference in means is not equal to 0
+#sample estimates:
+#mean in group SJdom mean in group SJsyl 
+#           1.216551            1.215721 
+
+
+simulated_means <- list()
+nreps = 10000 # 5000 iterations
+for(i in 1:nreps){
+    # Create temporary dataframe to permute so we don't modify the original
+    reshuffled <- SJ_df 
+    # Permute the width column with the 'sample()' function. 
+    reshuffled$value <- sample(reshuffled$value, size = nrow(reshuffled), 
+                               replace = FALSE)
+    # Calculate the means for each sex
+    mean_dom_sim <- mean(reshuffled %>% filter(population == "SJdom") 
+                           %>% pull(value))
+    mean_syl_sim <- mean(reshuffled %>% filter(population == "SJsyl") 
+                             %>% pull(value))
+    # Calculate to difference between simulated male and female body width 
+    # means
+    mean_diff_sim <- mean_dom_sim - mean_syl_sim
+    # Append simulated mean difference to list
+    simulated_means[i] <- mean_diff_sim
+}    
+
+# Unlist simulated means list into numeric vector
+simulated_means <- unlist(simulated_means)
+
+
+mean_SJdom <- mean(SJ_df %>% filter(population == "SJdom") 
+                           %>% pull(value))
+mean_SJsyl <- mean(SJ_df %>% filter(population == "SJsyl") 
+                             %>% pull(value))
+
+diff_means_obs <- 1.216551  - 1.215721 
+
+abs_simulated_means <- abs(simulated_means)
+abs_diff_means_obs <- abs(diff_means_obs)
+exceed_count <- length(abs_simulated_means[abs_simulated_means >= 
+                                               abs_diff_means_obs])
+p_val <- exceed_count / nreps
+#0.9269
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+2 Population with dimicile and sylvatic samples as a group independly of the collection habitat
+
+```{r}
+
+# Remove communities with mixed samples
+rhod.mixpop <- popsub(rhod.genind, blacklist=c("SF", "LM", "AH", "ND", "HG", "TC", "VC", "BM", "GA", "EX", "YS", "TR", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+# calculate per locus observed and expected heterozygocity {hierfstat}
+rhod.mix.bs <- basic.stats(rhod.mixpop, diploid = TRUE, digits = 2)
+#calaculate allelic richness
+rhod.mix.ar <- allelic.richness(rhod.mixpop)
+
+# Calculate average Observed heterozygosity per population
+mean(rhod.mix.bs$Ho[,1])
+# Expected heterozygosity Hs
+mean(rhod.mix.bs$Hs[,1])
+# Calculating mean Fis per population
+mean(rhod.mix.bs$Fis[,1], na.rm=T)
+# mean allelic richness by pop
+mean(rhod.mix.ar$Ar[,1])
+
+
+
+
+```
+
+3. Populations with groups of samples collected at different year and whether there was a insecticide spraying intervention at that year.
+
+```{r}
+# 
+# Remove communities without samples collected in both habitats (domicile and sylvatic).
+rhod.time <- popsub(rhod.genind, blacklist=c("SF", "LM", "AH", "HG", "TC", "VC", "BM", "EX", "YS", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+
+# Change the population map with the approrpiate domicile and sylvatic category.
+popmap.time <- as.factor(as.vector(rhod.time@strata$pophabtimetreat))
+rhod.time@pop <- popmap.time
+
+# calculate per locus observed and expected heterozygocity {hierfstat}
+rhod.time.bs <- basic.stats(rhod.time, diploid = TRUE, digits = 2)
+#$overall
+#   Ho    Hs    Ht   Dst   Htp  Dstp   Fst  Fstp   Fis  Dest 
+# 0.18  0.17  0.22  0.06  0.23  0.06  0.25  0.26 -0.05  0.07 
+
+# calculate allelic richness 
+rhod.time.ar <- allelic.richness(rhod.time)
+
+#Global fst
+
+wc(rhod.time)
+#$FST
+#[1] 0.2771999
+#$FIS
+#[1] -0.06638569
+
+# Average Observed heterozygosity per population
+mean(rhod.time.bs$Ho[,1])
+# Expected heterozygosity Hs
+mean(rhod.time.bs$Hs[,1])
+# Calculating mean Fis per population
+mean(rhod.time.bs$Fis[,1], na.rm=T)
+# mean allelic reachniss by pop
+mean(rhod.time.ar$Ar[,1])
+
+```
+4. Calculate alpha diversity for population with only domicile or sylvatic pops
+
+```{r}
+
+# subset samples with only dom or sylvatic pops
+rhod.onepop <- popsub(rhod.genind, blacklist=c("BR", "CE", "CG", "CQ","GL", "HY","SJ"))
+
+# calculate basic stats and allelic richness
+rhod.onepop.bs <- basic.stats(rhod.onepop, diploid = TRUE, digits = 2)
+rhod.onepop.ar <- allelic.richness(rhod.onepop)
+# Obs. heterocigocity
+mean(rhod.onepop.bs$Ho[,1])
+# Exp. Hetero
+mean(rhod.onepop.bs$Hs[,1])
+#mean Fis
+mean(rhod.onepop.bs$Fis[,1], na.rm=T)
+# mean allelic richness
+mean(rhod.onepop.ar$Ar[,1])
+
+# Calculate loci on HWE
+t.one <- seppop(rhod.onepop, pop=rhod.onepop@pop)
+
+length(which(ah[,3]>0.05))/length(ah[,3])
+
+ah <- hw.test(t.one$AH, B=0) # 0.8824451
+az <- hw.test(t.one$AZ, B=0) # 0.919279
+bm <- hw.test(t.one$BM, B=0)# 1
+ex <- hw.test(t.one$EX, B=0) #0.9275078
+ga <- hw.test(t.one$GA, B=0) #0.9294671
+hg <- hw.test(t.one$HG, B=0) # 0.9275078
+lm <- hw.test(t.one$LM, B=0)# 0.8851881
+nd <- hw.test(t.one$ND, B=0) # 0.9075235
+nj <- hw.test(t.one$NJ, B=0) # 0.9169279
+nt <- hw.test(t.one$NT, B=0) # 0.9345611
+rt <- hw.test(t.one$RT, B=0)# 0.950627
+sf <- hw.test(t.one$SF, B=0)# 0.9416144
+ss <- hw.test(t.one$SS, B=0)#  0.8965517
+tc <- hw.test(t.one$TC, B=0)# 0.9055643
+tm <- hw.test(t.one$TM, B=0)# 0.9467085
+tr <- hw.test(t.one$TR, B=0)# 0.9306426
+vc <- hw.test(t.one$VC, B=0)# 0.8726489
+ys <- hw.test(t.one$YS, B=0)#0.9067398
+
+
+
+
+```
+
+
+Linkage Disequilibrium using:
+
+https://grunwaldlab.github.io/Population_Genetics_in_R/Linkage_disequilibrium.html
+
+```{r}
+
+# For the whole Loja population
+
+
+
+
+AH.ld <- popsub(rhod.genind, "AH")
+ia(AH.ld, sample = 999) 
+
+#         Ia        p.Ia       rbarD        p.rD 
+#50.85707633  0.00100000  0.03667747  0.00100000 
+
+AZ.ld <- popsub(rhod.genind, "AZ")
+ia(AZ.ld, sample = 999)
+
+#         Ia        p.Ia       rbarD        p.rD 
+#8.765237910 0.001000000 0.007699653 0.001000000 
+
+BM.ld <- popsub(rhod.genind, "BM")
+ia(BM.ld, sample = 999)
+#38.25361272  0.00100000  0.04049636  0.00100000 
+
+BR.ld <- popsub(rhod.genind, "BR")
+ia(BR.ld, sample = 999)
+#         Ia        p.Ia       rbarD        p.rD 
+#21.88864099  0.00100000  0.01374788  0.00100000 
+
+CE.ld <- popsub(rhod.genind, "CE")
+ia(CE.ld, sample = 999)
+
+CG.ld <- popsub(rhod.genind, "CG")
+ia(CG.ld, sample = 999)
+
+
+CQ.ld <- popsub(rhod.genind, "CQ")
+ia(CQ.ld, sample = 999)
+
+EX.ld <- popsub(rhod.genind, "EX")
+ia(EX.ld, sample = 999)
+
+
+GA.ld <- popsub(rhod.genind, "GA")
+ia(GA.ld, sample = 999)
+
+GL.ld <- popsub(rhod.genind, "GL")
+ia(GL.ld, sample = 999)
+
+HG.ld <- popsub(rhod.genind, "HG")
+ia(HG.ld, sample = 999)
+
+
+HY.ld <- popsub(rhod.genind, "HY")
+ia(HY.ld, sample = 999)
+
+
+LM.ld <- popsub(rhod.genind, "LM")
+ia(LM.ld, sample = 999)
+
+
+
+ND.ld <- popsub(rhod.genind, "ND")
+ia(ND.ld, sample = 999)
+
+
+NJ.ld <- popsub(rhod.genind, "NJ")
+ia(NJ.ld, sample = 999)
+
+
+NT.ld <- popsub(rhod.genind, "NT")
+ia(NT.ld, sample = 999)
+
+
+RT.ld <- popsub(rhod.genind, "RT")
+ia(RT.ld, sample = 999)
+
+
+
+SF.ld <- popsub(rhod.genind, "SF")
+ia(SF.ld, sample = 999)
+
+
+SJ.ld <- popsub(rhod.genind, "SJ")
+ia(SJ.ld, sample = 999)
+
+
+SS.ld <- popsub(rhod.genind, "SS")
+ia(SS.ld, sample = 999)
+
+
+TC.ld <- popsub(rhod.genind, "TC")
+ia(TC.ld, sample = 999)
+
+
+TM.ld <- popsub(rhod.genind, "TM")
+ia(TM.ld, sample = 999)
+
+
+
+TR.ld <- popsub(rhod.genind, "TR")
+ia(TR.ld, sample = 999)
+
+
+
+VC.ld <- popsub(rhod.genind, "VC")
+ia(VC.ld, sample = 999)
+
+
+
+YS.ld <- popsub(rhod.genind, "YS")
+ia(YS.ld, sample = 999)
+
+
+
+
+
+```
+
+Linkage desequilibrium using 
+
+paper: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5972415/
+tutorial: https://github.com/AgResearch/GUS-LD
+http://htmlpreview.github.io/?https://github.com/AgResearch/GUS-LD/blob/master/doc/Introduction.html
+
+```{r}
+
+install.packages("devtools")
+library(devtools)
+install_github("tpbilton/GUSbase")
+install_github("AgResearch/GUS-LD")
+
+
+
+# convert VCF file to an RA file
+rafile <- VCFtoRA(infilename = "snps.loja.dplm.recode.vcf", direct = "./")
+
+
+RAdata <- readRA(rafile = "snps.loja.dplm.recode.vcf.ra.tab", sampthres = 0.01, excsamp = NULL)
+
+
+urpop <- makeUR(RAobj = RAdata, filter = list(MAF = 0.01, MISS = 0.5, BIN=100, HW = c(-0.05, Inf),
+                                              MAXDEPTH = 500), nThreads = 1)
+
+LDres <- GUSLD(URobj = urpop, nClust = 2)
+
+write_tsv(LDres, "LDres.rhodnius.tsv")
+
+
+## summary stats
+
+# total pairwise LD r2 = 2734291
+
+# Percentage of pairs in LD = 5730
+#[1] 0.2095607
+
+# percentage not in LD (i.e., in equilibrium) = 2728561
+
+#[1] 99.79044
+
+### To creat a heat map of pairwise LD r2
+
+LDres.tib <- LDres %>% select(r2, CHROM_SNP1, CHROM_SNP2)
+
+LD.mat = LDres.tib %>% 
+  spread(CHROM_SNP1, CHROM_SNP2, fill=0) %>% 
+  column_to_rownames(var="CHROM_SNP1") %>% 
+  as.matrix
+
+
+LD.mat <- LDres.tib %>% pivot_wider(LDres.tib, names_from = CHROM_SNP1, values_from = r2)
+
+edge_mat
+
+
+## LD to whole dataet with poppr
+
+
+ia(rhod.genind, sample=999)
+#Ia       p.Ia      rbarD       p.rD 
+#46.0595146  0.0010000  0.0208658  0.0010000 
+
+
+rhod.pair <- rhod.genind %>% clonecorrect() %>% pair.ia
+
+rhod.pair.df <- as_data_frame(rhod.pair)
+
+
+
+
+
+
+write.csv(rhod.pair, "rhod.genind.2552snps.Ia.rbarD.csv")
+
+```
+
+Linkage disequilibrium for pilot 2b rad
+
+
+```{r}
+
+# set working directory
+setwd("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/C02_KNNimp/chapt2_analysis")
+# linux cluster directory, close when not in cluster
+#setwd("~/Dropbox/Recuadoriensis_Analysis/C02_KNNimp")
+# Read  in vcf file
+pilot.bcgi <- read.genepop("./BcgI.2.90.gen")
+
+
+# Add population map from sample information file.
+bcgi.info <- read.csv("./pilot.strata.bcgi.csv")
+popmap.bcgi <- as.factor(as.vector(bcgi.info$struc))
+pilot.bcgi@pop <- popmap.bcgi
+
+loja.ld.bcgi <- popsub(pilot.bcgi, "loja")
+ia(loja.ld.bcgi, sample = 999) 
+
+#        Ia       p.Ia      rbarD       p.rD 
+# 5.70711089 0.00100000 0.03631849 0.00100000 
+
+manabi.ld.bcgi <- popsub(pilot.bcgi, "manabi")
+ia(manabi.ld.bcgi, sample = 999) 
+
+#        Ia       p.Ia      rbarD       p.rD 
+#4.36314277 0.00100000 0.02090498 0.00100000 
+
+
+## pairwise
+
+loja.ld.bcgi <- loja.ld.bcgi %>% clonecorrect() %>% pair.ia
+loja.ld.bcgi.df <- as_data_frame(loja.ld.bcgi)
+write.csv(loja.ld.bcgi.df, "loja.bcgi.df.poppr.csv")
+
+manabi.ld.bcgi.pair <- manabi.ld.bcgi %>% clonecorrect() %>% pair.ia
+manabi.ld.bcgi.df <- as_data_frame(manabi.ld.bcgi.pair)
+write.csv(manabi.ld.bcgi.df, "manabi.bcgi.df.poppr.csv")
+
+
+
+pilot.cspci <- read.genepop("./CspCI.2.90.gen")
+
+
+# Add population map from sample information file.
+cspci.info <- read.csv("./pilot.strata.cspci.csv")
+popmap.cspci <- as.factor(as.vector(cspci.info$struc))
+pilot.cspci@pop <- popmap.cspci
+
+loja.ld.cspci <- popsub(pilot.cspci, "loja")
+ia(loja.ld.cspci, sample = 999) 
+
+#          Ia        p.Ia       rbarD        p.rD 
+#40.51305632  0.00100000  0.08518463  0.00100000 
+
+manabi.ld.cspci <- popsub(pilot.cspci, "manabi")
+ia(loja.ld.cspci, sample = 999) 
+
+#        Ia       p.Ia      rbarD       p.rD 
+#87.8767525  0.0010000  0.1126456  0.0010000 
+
+
+loja.ld.cspci.pair <- loja.ld.cspci %>% clonecorrect() %>% pair.ia
+loja.ld.cspci.df <- as_data_frame(loja.ld.cspci.pair)
+write.csv(loja.ld.cspci.df, "loja.cspci.df.poppr.csv")
+
+manabi.ld.cspci.pair <- manabi.ld.cspci %>% clonecorrect() %>% pair.ia
+manabi.ld.cspci.df <- as_data_frame(manabi.ld.cspci.pair)
+write.csv(manabi.ld.bcgi.df, "manabi.cspcii.df.poppr.csv")
+
+ggplot(loja.ld.bcgi.df, aes(x=rbarD)) +
+  geom_histogram() +
+  theme_bw() +
+  xlab("ȓD")+ 
+  ylab("Pairwise SNP comparisons") +
+  font("xlab", size= 16, face= "bold") +
+  font("ylab", size= 16, face = "bold")
+
+ggplot(loja.ld.cspci.df, aes(x=rbarD)) +
+  geom_histogram() +
+  theme_bw() +
+  xlab("ȓD")+ 
+  ylab("Pairwise SNP comparisons") +
+  font("xlab", size= 16, face= "bold") +
+  font("ylab", size= 16, face = "bold")
+
+ggplot(manabi.ld.bcgi.df, aes(x=rbarD)) +
+  geom_histogram() +
+  theme_bw() +
+  xlab("ȓD")+ 
+  ylab("Pairwise SNP comparisons") +
+  font("xlab", size= 16, face= "bold") +
+  font("ylab", size= 16, face = "bold")
+
+ggplot(manabi.ld.cspci.df, aes(x=rbarD)) +
+  geom_histogram() +
+  theme_bw() +
+  xlab("ȓD")+ 
+  ylab("Pairwise SNP comparisons") +
+  font("xlab", size= 16, face= "bold") +
+  font("ylab", size= 16, face = "bold")
+
+
+
+
+
+```
+
+
+
+AMOVA
+
+1. populations/habitat 272 samples 25 communties
+2. populations/habitat 89 samples 7 communities
+
+
+```{r}
+
+# wc Fst
+wc(rhod.genind)
+
+#$FST
+#[1] 0.287689
+#$FIS
+#[1] -0.04400202
+
+
+# amova with hierstat
+rhod.hier <- genind2hierfstat(rhod.genind, pop = rhod.genind@pop)
+rhod.varcomp <- varcomp.glob(levels = data.frame(rhod.genind@strata$pop, rhod.genind@strata$hab), rhod.hier[,-1], diploid = TRUE)
+rhod.varcomp
+
+# bootstrap for variance components confidence interval and the derived F-statistics
+boot.vc(levels = data.frame(rhod.genind@strata$pop, rhod.genind@strata$hab), rhod.hier[,-1],nboot=1000,quant=c(0.025,0.5,0.975))
+
+#signifcance of population
+test.between(rhod.hier[,-1], test.lev = rhod.genind@strata$pop, rand.unit = rhod.genind@strata$hab, nperm = 999)
+# $p.val
+#[1] 0.001001001
+# significance of habitat
+test.within(rhod.hier[,-1], test = rhod.genind@strata$hab, within = rhod.genind@strata$pop, nperm = 999)
+#$p.val
+#[1] 0.001001001
+
+# Same analysis for the small dataset with domicile and sylvatic samples.
+wc(rhod.domsyl)
+#$FST
+#[1] 0.2694247
+#$FIS
+#[1] -0.001796513
+
+rhod.domsyl.hier <- genind2hierfstat(rhod.domsyl, pop = rhod.domsyl@pop)
+rhod.domsyl.varcomp <- varcomp.glob(levels = data.frame(rhod.domsyl@strata$pop, rhod.domsyl@strata$hab), rhod.domsyl.hier[,-1], diploid = T)
+
+boot.vc(levels = data.frame(rhod.domsyl@strata$pop, rhod.domsyl@strata$hab), rhod.domsyl.hier[,-1], diploid = T,nboot=1000,quant=c(0.025,0.5,0.975))
+
+test.between(rhod.domsyl.hier[,-1], test.lev = rhod.domsyl@strata$pop, rand.unit = rhod.domsyl@strata$hab, nperm = 999)
+test.within(rhod.domsyl.hier[,-1], test = rhod.domsyl@strata$hab, within = rhod.domsyl@strata$pop, nperm = 999)
+
+
+##### Analysis with time
+
+
+# amova with hierstat
+rhod.hier <- genind2hierfstat(rhod.genind, pop = rhod.genind@pop)
+rhod.varcomp <- varcomp.glob(levels = data.frame(rhod.genind@strata$pop, rhod.genind@strata$hab), rhod.genind@strata$coltime, rhod.hier[,-1], diploid = TRUE)
+rhod.varcomp
+
+#$overall
+#    rhod.genind.strata.pop     rhod.genind.strata.hab rhod.genind.strata.coltime 
+#                 151.21427                  -18.69685                   52.19399 
+#                       Ind                      Error 
+#                 -34.19286                  436.63331 
+
+#$F
+#                           rhod.genind.strata.pop rhod.genind.strata.hab rhod.genind.strata.coltime
+#Total                                   0.2575386             0.22569531                  0.3145888
+#rhod.genind.strata.pop                  0.0000000            -0.04288883                  0.0768393
+#rhod.genind.strata.hab                  0.0000000             0.00000000                  0.1148043
+#rhod.genind.strata.coltime              0.0000000             0.00000000                  0.0000000
+#                                    Ind
+#Total                       0.256353705
+#rhod.genind.strata.pop     -0.001595917
+#rhod.genind.strata.hab      0.039594737
+#rhod.genind.strata.coltime -0.084963779
+
+
+# bootstrap for variance components confidence interval and the derived F-statistics
+boot.vc(levels = data.frame(rhod.genind@strata$pop, rhod.genind@strata$hab, rhod.genind@strata$coltime), rhod.hier[,-1],nboot=1000,quant=c(0.025,0.5,0.975))
+
+#signifcance of population
+test.between(rhod.hier[,-1], test.lev = rhod.genind@strata$pop, rand.unit = rhod.genind@strata$hab, nperm = 999)
+# $p.val
+#[1] 0.001001001
+# significance of habitat
+test.within(rhod.hier[,-1], test = rhod.genind@strata$hab, within = rhod.genind@strata$pop, nperm = 999)
+#$p.val
+#[1] 0.001001001
+
+test.within(rhod.hier[,-1], test = rhod.genind@strata$coltime, within = rhod.genind@strata$pop, nperm = 999)
+
+
+
+#### analysis with time, small dataset
+
+rhod.domsyl.hier <- genind2hierfstat(rhod.domsyl, pop = rhod.domsyl@pop)
+
+rhod.domsyl.varcomp <- varcomp.glob(levels = data.frame(rhod.domsyl@strata$pop, rhod.domsyl@strata$hab, rhod.domsyl@strata$coltime), rhod.domsyl.hier[,-1], diploid = T)
+
+#$overall
+#    rhod.domsyl.strata.pop     rhod.domsyl.strata.hab rhod.domsyl.strata.coltime 
+#                149.913852                  -2.045492                  30.064515 
+#                       Ind                      Error 
+#                -18.135604                 436.013845 
+
+#$F
+#                           rhod.domsyl.strata.pop rhod.domsyl.strata.hab rhod.domsyl.strata.coltime
+#Total                                    0.251613            0.248179927                 0.29863974
+#rhod.domsyl.strata.pop                   0.000000           -0.004587362                 0.06283740
+#rhod.domsyl.strata.hab                   0.000000            0.000000000                 0.06711687
+#rhod.domsyl.strata.coltime               0.000000            0.000000000                 0.00000000
+#                                   Ind
+#Total                       0.26820122
+#rhod.domsyl.strata.pop      0.02216524
+#rhod.domsyl.strata.hab      0.02663044
+#rhod.domsyl.strata.coltime -0.04339925
+
+
+boot.vc(levels = data.frame(rhod.domsyl@strata$pop, rhod.domsyl@strata$hab, rhod.domsyl@strata$coltime), rhod.domsyl.hier[,-1], diploid = T,nboot=1000,quant=c(0.025,0.5,0.975))
+
+
+#$ci
+#      H-Total F-rhod.domsyl.strata.pop/Total F-rhod.domsyl.strata.hab/Total
+#2.5%   0.2420                         0.2410                         0.2357
+#50%    0.2499                         0.2515                         0.2481
+#97.5%  0.2573                         0.2627                         0.2605
+#      F-rhod.domsyl.strata.coltime/Total F-Ind/Total H-rhod.domsyl.strata.pop
+#2.5%                              0.2877      0.2439                   0.1812
+#50%                               0.2987      0.2680                   0.1870
+#97.5%                             0.3098      0.2912                   0.1925
+#      F-rhod.domsyl.strata.hab/rhod.domsyl.strata.pop #F-rhod.domsyl.strata.coltime/rhod.domsyl.strata.pop
+#2.5%                                          -0.0135                                              #0.0583
+#50%                                           -0.0044                                              #0.0629
+#97.5%                                          0.0036                                              #0.0676
+#      F-Ind/rhod.domsyl.strata.pop H-rhod.domsyl.strata.hab
+#2.5%                       -0.0011                   0.1817
+#50%                         0.0219                   0.1878
+#97.5%                       0.0463                   0.1938
+#      F-rhod.domsyl.strata.coltime/rhod.domsyl.strata.hab F-Ind/rhod.domsyl.strata.hab
+#2.5%                                               0.0590                       0.0028
+#50%                                                0.0670                       0.0260
+#97.5%                                              0.0757                       0.0510
+#      H-rhod.domsyl.strata.coltime F-Ind/rhod.domsyl.strata.coltime   Hobs
+#2.5%                        0.1699                          -0.0666 0.1748
+#50%                         0.1753                          -0.0438 0.1828
+#97.5%                       0.1806                          -0.0208 0.1905
+
+
+
+
+test.between(rhod.domsyl.hier[,-1], test.lev = rhod.domsyl@strata$pop, rand.unit = rhod.domsyl@strata$hab, nperm = 999)
+test.within(rhod.domsyl.hier[,-1], test = rhod.domsyl@strata$hab, within = rhod.domsyl@strata$pop, nperm = 999)
+
+
+test.within(rhod.domsyl.hier[,-1], test = rhod.domsyl@strata$coltime, within = rhod.domsyl@strata$pop, nperm = 999)
+
+
+#$p.val
+#[1] 0.001001001
+
+```
+
+
+ Phylogenic relationship between samples from genetic distances
+
+
+```{r}
+
+rhod.domsyl.dist <- dist(rhod.domsyl) # euclidean distances from stats package
+rhod.domsyl.diss.dist<- diss.dist(rhod.domsyl, percent = FALSE, mat = FALSE) #  distance will be reflected as the number of alleles differing between to individuals from package poppr
+
+rhod.domsyl.dist.gene <- dist.gene(as.data.frame(rhod.domsyl), method = "pairwise", pairwise.deletion = F) # the distance d between two individuals is the number of loci for which they differ, and the associated variance is d(L - d)/L, where L is the number of loci from package ape
+
+rhod.domsyl.d.njtree <- nj(rhod.domsyl.dist)
+rhod.domsyl.dd.njtree <- nj(rhod.domsyl.diss.dist)
+rhod.domsyl.dg.njtree <- nj(rhod.domsyl.dist.gene)
+
+# Plot tree in R with plot.phylo and change tip or edge/branch colours based on a categories see : http://blog.phytools.org/2017/01/plotting-terminal-edges-of-tree.html
+
+labels <- cbind(indNames(rhod.domsyl), rhod.domsyl@strata$hab)
+dom.lab <- subset(labels, subset= labels[,2] == "1")
+syl.lab <- subset(labels, subset = labels[,2] == "2")
+dom.vec <- as.vector(dom.lab[,1])
+syl.vec <- as.vector(syl.lab[,1])
+tt<-paintBranches(rhod.domsyl.d.njtree,edge=sapply(dom.vec,match,rhod.domsyl.d.njtree$tip.label),
+    state="dom")
+tt<-paintBranches(tt, edge=sapply(syl.vec,match,rhod.domsyl.d.njtree$tip.label),
+    state="syl")
+cols<-setNames(c("blue","red"),c("dom","syl"))
+plot.phylo(tt, type="fan", tip.color=cols, edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+
+
+
+plot.phylo(midpoint(rhod.domsyl.d.njtree), type="fan", edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+plot.phylo(midpoint(rhod.domsyl.dd.njtree), type="fan", edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+plot.phylo(midpoint(rhod.domsyl.dg.njtree), type="fan", edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+
+# Save the different trees created from different genetic distances
+write.tree(rhod.domsyl.d.njtree, file="rhod.domsyl.d.tre", append = FALSE, digits = 10, tree.names = FALSE)
+
+write.tree(rhod.domsyl.dd.njtree, file="rhod.domsyl.dd.tre", append = FALSE, digits = 10, tree.names = FALSE)
+
+write.tree(rhod.domsyl.dg.njtree, file="rhod.domsyl.dg.tre", append = FALSE, digits = 10, tree.names = FALSE)
+
+
+```
+
+Phylogenic relationship between samples and collection sites.
+
+
+```{r}
+
+rhod.pop.dist <- dist(rhod.genind) # euclidean distances from stats package
+
+# run NJ trees
+rhod.pop.d.njtree <- nj(rhod.pop.dist)
+
+# Plot tree in R with plot.phylo and change tip or edge/branch colours based on a categories see : http://blog.phytools.org/2017/01/plotting-terminal-edges-of-tree.html
+
+labels <- cbind(indNames(rhod.genind), rhod.genind@strata$hab)
+dom.lab <- subset(labels, subset= labels[,2] == "1")
+syl.lab <- subset(labels, subset = labels[,2] == "2")
+dom.vec <- as.vector(dom.lab[,1])
+syl.vec <- as.vector(syl.lab[,1])
+
+tt<-paintBranches(rhod.pop.d.njtree,edge=sapply(dom.vec,match,rhod.pop.d.njtree$tip.label),
+    state="dom")
+tt<-paintBranches(tt, edge=sapply(syl.vec,match,rhod.pop.d.njtree$tip.label),
+    state="syl")
+cols<-setNames(c("blue","red"),c("dom","syl"))
+plot.phylo(tt, type="fan", tip.color=cols, edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+
+
+
+plot.phylo(midpoint(rhod.pop.d.njtree), type="fan", edge.width=0.1, cex=0.6, no.margin=F, rotate=60, align.tip.label = TRUE)
+
+
+# Save the different trees created from different genetic distances
+write.tree(rhod.pop.d.njtree, file="./phylo.trees/rhod.pop.d.tre", append = FALSE, digits = 10, tree.names = FALSE)
+
+```
+
+
+DAPC analysis
+
+
+```{r}
+
+# Dom vs syl
+
+# Remove communities without samples collected in both habitats (domicile and sylvatic).
+rhod.domsyl <- popsub(rhod.genind, blacklist=c("SF", "LM", "AH", "ND", "HG", "TC", "VC", "BM", "GA", "EX", "YS", "TR", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+# Change the population map with the approrpiate domicile and sylvatic category.
+popmap.hab <- as.factor(as.vector(rhod.domsyl@strata$hab))
+rhod.domsyl@pop <- popmap.hab
+
+
+par(mfrow = c(1,2))
+rhod.domsyl.clust <- find.clusters(rhod.domsyl, max.n.clust = 14) # this is the good clustering
+100
+5
+
+rhod.domsyl.dapc <- dapc(rhod.domsyl, rhod.domsyl.clust$grp) # this is the good dapc
+50
+3
+
+rhod.domsyl.dapc$grp
+
+cols <- c("royalblue3", "chartreuse3", "black")
+myPal <- colorRampPalette(c("blue","gold","red"))
+
+# domsyl
+
+scatter(rhod.domsyl.dapc, grp=rhod.domsyl@strata$hab, posi.da="bottomleft", col=cols, xax=1, yax=3, 
+        clab=0.8, solid=0.7, cex=3, pch=19, bg="white", cstar=0, cellipse=0, label = NULL, 
+        leg=F, txt.leg=paste("Cluster",1:5))
+# time
+par(new=TRUE)
+df.rhod.domsyl <- data.frame(x = rhod.domsyl.dapc$ind.coord[,1], y = rhod.domsyl.dapc$ind.coord[,3])
+noms.rhod.domsyl <- rhod.domsyl@strata$coltime
+s.label(dfxy = df.rhod.domsyl, xax=1, yax=2, label=noms.rhod.domsyl,
+        clabel=0.7, 
+        boxes=FALSE,
+        neig = TRUE,
+        grid=FALSE, addaxes=TRUE) # do not draw lines or axes in addition to the labels
+
+# Explore population
+par(new=TRUE)
+df.rhod.domsyl <- data.frame(x = rhod.domsyl.dapc$ind.coord[,1], y = rhod.domsyl.dapc$ind.coord[,3])
+noms.rhod.domsyl <- rhod.domsyl@strata$pop
+s.label(dfxy = df.rhod.domsyl, xax=1, yax=2, label=noms.rhod.domsyl,
+        clabel=0.8, 
+        boxes=FALSE,
+        neig = TRUE,
+        grid=FALSE, addaxes=TRUE)
+
+
+
+#####
+
+## Create new data frame from rhod.domsyl.dapc to save DAPC information for using with ggplo2
+new.rhod.domsyl.df <- as.data.frame(rhod.domsyl.dapc$ind.coord) # individual coordinates
+new.rhod.domsyl.df$Group <- rhod.domsyl.dapc$grp # group assignments
+new.rhod.domsyl.df$Pop <- rhod.domsyl@strata$pop # populations
+new.rhod.domsyl.df$Hab <- rhod.domsyl@strata$hab # ecotypes
+
+new.r.ds.df <- new.rhod.domsyl.df # create a new data frame to change the legend title and categories 
+
+# Change legend title and factors' names
+levels(new.r.ds.df$Hab)[levels(new.r.ds.df$Hab)=="dom"] <- "Domestic"
+levels(new.r.ds.df$Hab)[levels(new.r.ds.df$Hab)=="syl"] <- "Sylvatic"
+names(new.r.ds.df)[names(new.r.ds.df)=="Hab"]  <- "Ecotype"
+
+
+
+# Create a Scatter plot similar to Adegent using PC1 and PC3 coordinates
+DAPC13 <-  ggplot(new.r.ds.df, aes(x = LD1, y = LD3)) +
+    geom_point(size =22, shape = 20, alpha = 0.6, aes(colour = Ecotype)) +
+    geom_text(aes(label = Pop), size = 4) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 1") +
+    ylab("PC 3") +
+    font("xlab", size = 25, face = "bold") +
+    font("ylab", size = 25, face = "bold") +
+   theme(axis.text.x = element_text( size=16,face="bold"), 
+         axis.text.y = element_text(size=16,face="bold"))
+
+# Obtain the cumulated variance % for each PCA axis    
+temp <- rhod.domsyl.dapc$pca.eig
+temp <- 100* cumsum(temp)/sum(temp)
+
+# Create a data frame of this variance and add a PCA.eigenvalue list 1-88
+var.df <- as.data.frame(temp) 
+var.df$PCA.eig <- as.integer(1:length(temp))
+var.df$Retained <- ifelse(var.df$PCA.eig<=50, "Yes", "No") # add a column indicating PCA retained "Yes" or not "No"
+
+# Cumulated variance plot
+var.insert <- ggplot(var.df, aes(x=PCA.eig, y=temp))+
+  geom_segment(aes(xend = PCA.eig, yend = 0, colour=Retained), size = 1, lineend = "butt") +
+  scale_colour_manual(values = c("lightgrey", "black")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("PCA eigenvalues") +
+  ylab("Cumulated variance (%)") +
+  font("xlab", size = 16, face = "bold") +
+  font("ylab", size = 16, face = "bold") +
+   theme(axis.text.x = element_text( size=14,face="bold"), 
+         axis.text.y = element_text(size=14,face="bold"))
+
+# Create a data frame of the Discriminant functions
+eigenvalues <- rhod.domsyl.dapc$eig
+eig.df <- as.data.frame(eigenvalues)
+eig.df$DA.eig <- as.factor(1:length(eig.df$eigenvalues))
+pc13 <- c("Yes", "No", "Yes", "Null")
+pc12 <- c("Yes", "Yes", "No", "Null")
+pc23 <- c("No", "Yes", "Yes", "Null")
+eig.df$PC13 <- pc13
+eig.df$PC12 <- pc12
+eig.df$PC23 <- pc23
+
+# Plot discriminant functions eigenvalues
+da.insert13<- ggplot(eig.df, aes(x=DA.eig, y=eigenvalues))+
+  geom_segment(aes(xend = DA.eig, yend = 0, colour=PC13), 
+               size = 14, lineend = "butt") +
+  scale_colour_manual(values = c("grey50", "grey86", "black")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("DA eigenvalues") +
+  font("xlab", size = 16, face = "bold") +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+   theme(axis.text.x = element_text( size=14,face="bold"))
+
+# Add inset cumulated varicance plot and Discriminant Analysis eigenvalues
+DAPC13 + annotation_custom(ggplotGrob(var.insert), 
+                           xmin = -34, 
+                           xmax = -18, 
+                           ymin = 4.8, 
+                           ymax =15) + 
+  annotation_custom(ggplotGrob(da.insert13), 
+                    xmin = -34, 
+                    xmax = -25, 
+                    ymin = -5, 
+                    ymax = -10)
+
+#####
+
+# Create a Scatter plot similar to Adegent using PC1 and PC2 coordinates
+DAPC12 <-  ggplot(new.r.ds.df, aes(x = LD1, y = LD2)) +
+    geom_point(size = 20, shape = 20, alpha = 0.7, aes(colour = Ecotype)) +
+    geom_text(aes(label = Pop), size = 5) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 1") +
+    ylab("PC 2") +
+    font("xlab", size = 20, face = "bold") +
+    font("ylab", size = 20, face = "bold")
+
+# Plot discriminant functions eigenvalues
+da.insert12<- ggplot(eig.df, aes(x=DA.eig, y=eigenvalues))+
+  geom_segment(aes(xend = DA.eig, yend = 0, colour=PC12), 
+               size = 14, lineend = "butt") +
+  scale_colour_manual(values = c("grey50", "grey86", "black")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("DA eigenvalues") +
+  font("xlab", size = 16, face = "bold") +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+# Add inset cumulated varicance plot and Discriminant Analysis eigenvalues
+DAPC12 + annotation_custom(ggplotGrob(var.insert), xmin = -17, xmax = -27, ymin = -20, ymax = -37) +
+    annotation_custom(ggplotGrob(da.insert12), xmin = 22, xmax = 32, ymin = -20, ymax = -37)
+
+#####
+
+# Create a Scatter plot similar to Adegent using PC1 and PC2 coordinates
+DAPC23 <-  ggplot(new.r.ds.df, aes(x = LD2, y = LD3)) +
+    geom_point(size = 20, shape = 20, alpha = 0.7, aes(colour = Ecotype)) +
+    geom_text(aes(label = Pop), size = 5) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 2") +
+    ylab("PC 3") +
+    font("xlab", size = 20, face = "bold") +
+    font("ylab", size = 20, face = "bold")
+
+# Plot discriminant functions eigenvalues
+da.insert23<- ggplot(eig.df, aes(x=DA.eig, y=eigenvalues))+
+  geom_segment(aes(xend = DA.eig, yend = 0, colour=PC23), 
+               size = 14, lineend = "butt") +
+  scale_colour_manual(values = c("grey50", "grey86", "black")) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("DA eigenvalues") +
+  font("xlab", size = 16, face = "bold") +
+  theme(axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+
+# Add inset cumulated varicance plot and Discriminant Analysis eigenvalues
+DAPC23 + annotation_custom(ggplotGrob(var.insert), xmin = -30, xmax = -37, ymin = 8.5, ymax = 14.5) +
+    annotation_custom(ggplotGrob(da.insert23), xmin = -30, xmax = -37, ymin = -3, ymax = -9)
+
+#####
+
+# Plot time DAPCs
+
+new.r.ds.df$Coltime <- rhod.domsyl@strata$coltime
+
+# DAPC 13 vs Time
+DAPC13.time <-  ggplot(new.r.ds.df, aes(x = LD1, y = LD3)) +
+    geom_point(size = 20, shape = 20, alpha = 0.7, aes(colour = Ecotype)) +
+    geom_text(aes(label = Coltime), size = 4) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 1") +
+    ylab("PC 3") +
+    font("xlab", size = 20, face = "bold") +
+    font("ylab", size = 20, face = "bold")
+
+DAPC13.time + annotation_custom(ggplotGrob(var.insert), xmin = 23, xmax = 33, ymin = 6.5, ymax = 16) +
+    annotation_custom(ggplotGrob(da.insert13), xmin = 23, xmax = 33, ymin = -3, ymax = -9)
+
+
+# DAPC 12 vs Time
+DAPC12.time <-  ggplot(new.r.ds.df, aes(x = LD1, y = LD2)) +
+    geom_point(size = 20, shape = 20, alpha = 0.7, aes(colour = Ecotype)) +
+    geom_text(aes(label = Coltime), size = 5) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 1") +
+    ylab("PC 2") +
+    font("xlab", size = 20, face = "bold") +
+    font("ylab", size = 20, face = "bold")
+
+# Add inset cumulated varicance plot and Discriminant Analysis eigenvalues
+DAPC12.time + annotation_custom(ggplotGrob(var.insert), xmin = -17, xmax = -27, ymin = -20, ymax = -37) +
+    annotation_custom(ggplotGrob(da.insert12), xmin = 22, xmax = 32, ymin = -20, ymax = -37)
+
+# DAPC 23 vs Time
+
+DAPC23.time <-  ggplot(new.r.ds.df, aes(x = LD2, y = LD3)) +
+    geom_point(size = 20, shape = 20, alpha = 0.7, aes(colour = Ecotype)) +
+    geom_text(aes(label = Coltime), size = 5) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_colour_manual(values=cols) + 
+    theme_bw() +
+  theme(legend.position = "none") +
+    xlab("PC 2") +
+    ylab("PC 3") +
+    font("xlab", size = 20, face = "bold") +
+    font("ylab", size = 20, face = "bold")
+
+DAPC23.time + annotation_custom(ggplotGrob(var.insert), xmin = -30, xmax = -37, ymin = 8.5, ymax = 14.5) +
+    annotation_custom(ggplotGrob(da.insert23), xmin = -30, xmax = -37, ymin = -3, ymax = -9)
+
+
+
+```
+
+
+Pairwise Fst comparisons among samples from domicile and sylvatic habitat within a communtiy - pairwise.fst adegent using Nei's Fst
+
+
+```{r}
+
+#("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS")
+NBPERM <-999
+
+# BR dom syl pairwise Fst
+rhod.BR <- popsub(rhod.genind, blacklist=c( "AH", "AZ", "BM", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.br <- as.factor(as.vector(rhod.BR@strata$pophab))
+rhod.BR@pop <- popmap.br
+mat.obs.br <- pairwise.fst(rhod.BR, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.br <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.BR, pop=sample(pop(rhod.BR)), res.type="matrix"), mc.cores = 3)
+test.br <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.br[[i]][1,2])), mat.obs.br[1,2], alter="greater")
+
+# CE pairwise comparison
+rhod.CE <- popsub(rhod.genind, blacklist=c( "AH", "AZ", "BM", "BR", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.ce <- as.factor(as.vector(rhod.CE@strata$pophab))
+rhod.CE@pop <- popmap.ce
+mat.obs.ce <- pairwise.fst(rhod.CE, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.ce <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CE, pop=sample(pop(rhod.CE)), res.type="matrix"), mc.cores = 4)
+test.ce <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.ce[[i]][1,2])), mat.obs.ce[1,2], alter="greater")
+
+
+# CG dom syl pairwise Fst
+rhod.CG <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.cg <- as.factor(as.vector(rhod.CG@strata$pophab))
+rhod.CG@pop <- popmap.cg
+mat.obs.cg <- pairwise.fst(rhod.CG, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.cg <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CG, pop=sample(pop(rhod.CG)), res.type="matrix"), mc.cores = 4)
+test.cg <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cg[[i]][1,2])), mat.obs.cg[1,2], alter="greater")
+
+# CQ pairwise comparisons
+rhod.CQ <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.cq <- as.factor(as.vector(rhod.CQ@strata$pophab))
+rhod.CQ@pop <- popmap.cq
+mat.obs.cq <- pairwise.fst(rhod.CQ, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.cq <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CQ, pop=sample(pop(rhod.CQ)), res.type="matrix"), mc.cores = 4)
+test.cq <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cq[[i]][1,2])), mat.obs.cq[1,2], alter="greater")
+
+# GL pairwise comparisons
+rhod.GL <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.gl <- as.factor(as.vector(rhod.GL@strata$pophab))
+rhod.GL@pop <- popmap.gl
+mat.obs.gl <- pairwise.fst(rhod.GL, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.gl <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.GL, pop=sample(pop(rhod.GL)), res.type="matrix"), mc.cores = 4)
+test.gl <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.gl[[i]][1,2])), mat.obs.gl[1,2], alter="greater")
+
+# HY pairwise comparisons
+rhod.HY <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.hy <- as.factor(as.vector(rhod.HY@strata$pophab))
+rhod.HY@pop <- popmap.hy
+mat.obs.hy <- pairwise.fst(rhod.HY, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.hy <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.HY, pop=sample(pop(rhod.HY)), res.type="matrix"), mc.cores = 4)
+test.hy <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.hy[[i]][1,2])), mat.obs.hy[1,2], alter="greater")
+
+# SJ pairwise comparisons
+rhod.SJ <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY","LM", "ND", "NJ", "NT", "RT", "SF",  "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.sj <- as.factor(as.vector(rhod.SJ@strata$pophab))
+rhod.SJ@pop <- popmap.sj
+mat.obs.sj <- pairwise.fst(rhod.SJ, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.sj <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.SJ, pop=sample(pop(rhod.SJ)), res.type="matrix"), mc.cores = 4)
+test.sj <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.sj[[i]][1,2])), mat.obs.sj[1,2], alter="greater")
+
+p <- c(0.001, 0.049, 0.182, 0.024, 0.222, 0.005, 0.055)
+p.adjust(p, "fdr")
+p.adjust(p, "bonferroni")
+
+NBPERM <- 999
+
+# Different year collection group samples
+#c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS")
+# Remove communities without samples collected in both habitats (domicile and sylvatic).
+rhod.BRT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.brt <- as.factor(as.vector(rhod.BRT@strata$pophabtimetreat))
+rhod.BRT@pop <- popmap.brt
+mat.obs.brt <- pairwise.fst(rhod.BRT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.brt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.BRT, pop=sample(pop(rhod.BRT)), res.type="matrix"), mc.cores = 4)
+test.brt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.brt[[i]][1,2])), mat.obs.brt[1,2], alter="greater")
+
+# CG
+rhod.CGT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.cgt <- as.factor(as.vector(rhod.CGT@strata$pophabtimetreat))
+rhod.CGT@pop <- popmap.cgt
+mat.obs.cgt <- pairwise.fst(rhod.CGT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.cgt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CGT, pop=sample(pop(rhod.CGT)), res.type="matrix"), mc.cores = 4)
+test.cgt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cgt[[i]][1,2])), mat.obs.cgt[1,2], alter="greater")
+
+#GL
+rhod.GLT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.glt <- as.factor(as.vector(rhod.GLT@strata$pophabtimetreat))
+rhod.GLT@pop <- popmap.glt
+mat.obs.glt <- pairwise.fst(rhod.GLT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.glt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.GLT, pop=sample(pop(rhod.GLT)), res.type="matrix"), mc.cores = 4)
+test.glt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.glt[[i]][1,2])), mat.obs.glt[1,2], alter="greater")
+
+#SJ
+rhod.SJT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.sjt <- as.factor(as.vector(rhod.SJT@strata$pophabtimetreat))
+rhod.SJT@pop <- popmap.sjt
+mat.obs.sjt <- pairwise.fst(rhod.SJT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.sjt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.SJT, pop=sample(pop(rhod.SJT)), res.type="matrix"), mc.cores = 4)
+test.sjt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.sjt[[i]][1,2])), mat.obs.sjt[1,2], alter="greater")
+
+#ND
+rhod.NDT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM",  "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.ndt <- as.factor(as.vector(rhod.NDT@strata$pophabtimetreat))
+rhod.NDT@pop <- popmap.ndt
+mat.obs.ndt <- pairwise.fst(rhod.NDT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.ndt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.NDT, pop=sample(pop(rhod.NDT)), res.type="matrix"), mc.cores = 4)
+test.ndt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.ndt[[i]][1,2])), mat.obs.ndt[1,2], alter="greater")
+
+#TR
+rhod.TRT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GA", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "VC", "YS"))
+popmap.trt <- as.factor(as.vector(rhod.TRT@strata$pophabtimetreat))
+rhod.TRT@pop <- popmap.trt
+mat.obs.trt <- pairwise.fst(rhod.TRT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.trt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.TRT, pop=sample(pop(rhod.TRT)), res.type="matrix"), mc.cores = 4)
+test.trt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.trt[[i]][1,2])), mat.obs.trt[1,2], alter="greater")
+
+#GA
+rhod.GAT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE", "CG", "CQ", "EX", "GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.gat <- as.factor(as.vector(rhod.GAT@strata$pophabtimetreat))
+rhod.GAT@pop <- popmap.gat
+mat.obs.gat <- pairwise.fst(rhod.GAT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.gat <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.GAT, pop=sample(pop(rhod.GAT)), res.type="matrix"), mc.cores = 4)
+test.gat <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.gat[[i]][1,2])), mat.obs.gat[1,2], alter="greater")
+
+# Special cases CE, CQ, HY
+
+# CE
+rhod.CET <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CG", "CQ", "EX", "GA","GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.cet <- as.factor(as.vector(rhod.CET@strata$pophabtimetreat))
+rhod.CET@pop <- popmap.cet
+mat.obs.cet <- pairwise.fst(rhod.CET, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.cet <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CET, pop=sample(pop(rhod.CET)), res.type="matrix"), mc.cores = 4)
+test12.cet <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cet[[i]][1,2])), mat.obs.cet[1,2], alter="greater")
+test13.cet <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cet[[i]][1,3])), mat.obs.cet[1,3], alter="greater")
+test23.cet <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cet[[i]][2,3])), mat.obs.cet[2,3], alter="greater")
+
+# CQ
+rhod.CQT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE","CG", "EX", "GA","GL", "HG", "HY", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.cqt <- as.factor(as.vector(rhod.CQT@strata$pophabtimetreat))
+rhod.CQT@pop <- popmap.cqt
+mat.obs.cqt <- pairwise.fst(rhod.CQT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.cqt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.CQT, pop=sample(pop(rhod.CQT)), res.type="matrix"), mc.cores = 4)
+test12.cqt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cqt[[i]][1,2])), mat.obs.cqt[1,2], alter="greater")
+test13.cqt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cqt[[i]][1,3])), mat.obs.cqt[1,3], alter="greater")
+test23.cqt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.cqt[[i]][2,3])), mat.obs.cqt[2,3], alter="greater")
+
+
+# HY
+rhod.HYT <- popsub(rhod.genind, blacklist=c("AH", "AZ", "BM", "BR", "CE","CG", "CQ","EX", "GA","GL", "HG", "LM", "ND", "NJ", "NT", "RT", "SF", "SJ","SS", "TC", "TM", "TR", "VC", "YS"))
+popmap.hyt <- as.factor(as.vector(rhod.HYT@strata$pophabtimetreat))
+rhod.HYT@pop <- popmap.hyt
+mat.obs.hyt <- pairwise.fst(rhod.HYT, res.type="matrix") # this takes about 17 seconds on my computer
+mat.perm.hyt <- mclapply(1:NBPERM, function(i) pairwise.fst(rhod.HYT, pop=sample(pop(rhod.HYT)), res.type="matrix"), mc.cores = 4)
+test12.hyt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.hyt[[i]][1,2])), mat.obs.hyt[1,2], alter="greater")
+test13.hyt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.hyt[[i]][1,3])), mat.obs.hyt[1,3], alter="greater")
+test23.hyt <- as.randtest(na.omit(sapply(1:NBPERM, function(i) mat.perm.hyt[[i]][2,3])), mat.obs.hyt[2,3], alter="greater")
+
+p2 <- c(0.001, 0.084, 0.409, 0.022, 0.02, 0.004, 0.022, 0.475, 0.195, 0.06018, 0.017, 0.068, 0.05, 0.006, 0.685, 0.013)
+
+#p.adjust(p2, "bonferroni")
+# [1] 0.01600 1.00000 1.00000 0.35200 0.32000 0.06400 0.35200 1.00000 1.00000
+#[10] 0.96288 0.27200 1.00000 0.80000 0.09600 1.00000 0.20800
+
+#[1] 0.01600000 0.11200000 0.46742857 0.04400000 0.04400000 0.03200000
+# [7] 0.04400000 0.50666667 0.24000000 0.09628800 0.04400000 0.09890909
+#[13] 0.08888889 0.03200000 0.68500000 0.04400000
+
+
+# correlation test between dom and syl geo and gen ditances.
+
+# gen.dist.vec
+#[1] 0.05 0.08 0.06 0.06 0.06 0.03 0.10
+
+# geo.vec
+#[1] 0.9 1.8 0.1 0.9 3.1 0.5 0.2
+
+#cor.test(gen.dist.vec, geo.vec)
+# [1] -0.01014779 p-value 0.98
+
+# 
+
+
+
+```
+
+Pairwise Fst comparisons among samples from domicile and sylvatic habitat within a communtiy - using a different approach to Nei's Fst. I will use diveRsity to calculate WC FST sample biased correction.
+
+
+```{r}
+
+
+pwGstHendrick.BR.mat <- pairwise_Gst_Hedrick(rhod.BR) #0.12158
+pwGstNei.BR.mat <- pairwise_Gst_Nei(rhod.BR) #0.05131588
+pwWCFst.BR.mat <- pairwise.fst(rhod.BR) # 0.08480272
+
+pwGstHendrick.CG.mat <- pairwise_Gst_Hedrick(rhod.CG) # 0.04258367
+pwGstNei.CG.mat <- pairwise_Gst_Nei(rhod.CG) # 0.01699951
+pwWCFst.CG.mat <- pairwise.fst(rhod.CG) # 0.05419255
+
+pwGstHendrick.CQ.mat <- pairwise_Gst_Hedrick(rhod.CQ) # 0.04714119
+pwGstNei.CQ.mat <- pairwise_Gst_Nei(rhod.CQ) # 0.01952971
+pwWCFst.CQ.mat <- pairwise.fst(rhod.CQ) # 0.05796143
+
+pwGstHendrick.GL.mat <- pairwise_Gst_Hedrick(rhod.GL) # 0.05457195
+pwGstNei.GL.mat <- pairwise_Gst_Nei(rhod.GL) # 0.02269748
+pwWCFst.GL.mat <- pairwise.fst(rhod.GL) # 0.09762198
+
+
+pwGstHendrick.CE.mat <- pairwise_Gst_Hedrick(rhod.CE) # 0.03532818
+pwGstNei.CE.mat <- pairwise_Gst_Nei(rhod.CE) # 0.01467583
+pwWCFst.CE.mat <- pairwise.fst(rhod.CE) # 0.0606314
+
+
+pwGstHendrick.HY.mat <- pairwise_Gst_Hedrick(rhod.HY) # 0.04974147
+pwGstNei.HY.mat <- pairwise_Gst_Nei(rhod.HY) # 0.02203361
+pwWCFst.HY.mat <- pairwise.fst(rhod.HY) # 0.06299636
+
+
+pwGstHendrick.SJ.mat <- pairwise_Gst_Hedrick(rhod.SJ) # -0.003068866
+pwGstNei.SJ.mat <- pairwise_Gst_Nei(rhod.SJ) # -0.001349367
+pwWCFst.SJ.mat <- pairwise.fst(rhod.SJ) # 0.02568171
+
+
+```
+
+Isolation by distance analyses separetely for domicile and sylvatic populations
+
+
+```{r}
+
+# subsample domicile and sylvatic populations
+
+popmap.pophab <- as.factor(as.vector(rhod.genind@strata$pophab))
+rhod.pophab<- rhod.genind
+rhod.pophab@pop <- popmap.pophab
+
+#c("AHdom", "AZsyl", "BMdom", "BRdom", "BRsyl", "CEdom", "CEsyl", "CGdom", "CGsyl", "CQdom", "CQsyl", "EXdom", "GAdom", "GLdom", "GLsyl", "HGdom", "HYdom", "HYsyl", "LMdom", "NDdom", "NJdom", "NTsyl", "RTsyl", "SFdom", "SJdom", "SJsyl", "SSdom", "TCdom", "TMdom", "TRdom", "VCdom", "YSdom")
+
+rhod.dom <- popsub(rhod.pophab, blacklist=c("AZsyl",  "BRsyl",  "CEsyl", "CGsyl",  "CQsyl",  "GLsyl",  "HYsyl", "NTsyl", "RTsyl", "SJsyl"))
+
+rhod.syl <- popsub(rhod.pophab, blacklist=c("AHdom", "BMdom", "BRdom", "CEdom",  "CGdom",  "CQdom",  "EXdom", "GAdom", "GLdom",  "HGdom", "HYdom",  "LMdom", "NDdom", "NJdom", "SFdom", "SJdom",  "SSdom", "TCdom", "TMdom", "TRdom", "VCdom", "YSdom"))
+
+# Calculate all pairwise Fst and Hendricks Gst matrices.
+rhod.dom.pwFst <- pairwise.fst(rhod.dom)
+rhod.syl.pwFst <- pairwise.fst(rhod.syl)
+rhod.dom.pwGst <- pairwise_Gst_Hedrick(rhod.dom)
+rhod.syl.pwGst <- pairwise_Gst_Hedrick(rhod.syl)
+
+write.csv(as.matrix(rhod.dom.pwFst), file = "rhod.dom.pwFst.csv", row.names = T, col.names = T)
+write.csv(as.matrix(rhod.syl.pwFst), file = "rhod.syl.pwFst.csv")
+write.csv(as.matrix(rhod.dom.pwGst), file = "rhod.dom.pwGst.csv")
+write.csv(as.matrix(rhod.syl.pwGst), file = "rhod.syl.pwGst.csv")
+
+
+
+# domicile mantel test with Fst matrix
+# Pairwise Fst matrix
+genmat.dom <- read.csv("rhod.dom.pwFst.csv", header = TRUE, row.names = 1)
+Dgen.matrix.dom <- as.matrix(genmat.dom)
+Dgen.dom <- as.dist(Dgen.matrix.dom)
+
+#Create a matrix of site locations
+sites.dom <- read.csv ("UTMdom.csv")
+sites.mat.dom <-as.matrix(sites.dom[c("X", "Y")])
+sites.mat.dom
+#Get geographic distance in meters
+geo.dist.dom <-pointDistance(sites.mat.dom,longlat=F)
+Dgeo.dom <-as.dist(geo.dist.dom)
+
+# Mantel test
+ibd.dom <- mantel.randtest(Dgen.dom,Dgeo.dom)
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = Dgen.dom, m2 = Dgeo.dom)
+#Observation: 0.4589036 
+#Based on 999 replicates
+#Simulated p-value: 0.001 
+#Alternative hypothesis: greater 
+#    Std.Obs Expectation    Variance 
+#3.693814571 0.001124974 0.015358924
+
+plot(ibd.dom)
+plot(Dgeo.dom, Dgen.dom)
+abline(glm(Dgen.dom~Dgeo.dom), col="red",lty=2)
+
+
+dens.dom <- kde2d(Dgeo.dom,Dgen.dom, n=300)
+myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+plot(Dgeo.dom, Dgen.dom, pch=20,cex=2)
+image(dens, col=transp(myPal(300),.7), add=TRUE)
+abline(glm(Dgen.dom~Dgeo.dom), col="red",lty=2)
+title("Isolation by distance plot")
+
+# correlograms 
+plot(mgram(Dgen.dom, Dgeo.dom))
+
+#$mgram
+#           lag ngroup      mantelr  pval         llim          ulim
+# [1,]  5358.31     28  0.263278117 0.001  0.203484052  3.583189e-01
+# [2,] 16074.93     31  0.251757431 0.007  0.205856603  2.937232e-01
+# [3,] 26791.55     48  0.069324515 0.450 -0.001433944  1.409242e-01
+# [4,] 37508.17     47 -0.212058853 0.008 -0.318197129 -1.040625e-01
+# [5,] 48224.79     39 -0.141297611 0.119 -0.221478670 -4.831148e-02
+# [6,] 58941.41     19  0.040210324 0.651 -0.041796127  1.362543e-01
+# [7,] 69658.04      4 -0.007217147 0.924 -0.034531010  1.507395e-02
+# [8,] 80374.66      7 -0.123823665 0.252 -0.170111033  2.825633e-17
+# [9,] 91091.28      7 -0.270417898 0.019 -0.316064780  4.296916e-17
+
+
+# Sylvatic mantel test with Fst matrix
+# Pairwise Fst matrix
+genmat.syl <- read.csv("rhod.syl.pwFst.csv", header = TRUE, row.names = 1)
+Dgen.matrix.syl <- as.matrix(genmat.syl)
+Dgen.syl <- as.dist(Dgen.matrix.syl)
+
+#Create a matrix of site locations
+sites.syl <- read.csv ("UTMsyl.csv")
+sites.mat.syl <-as.matrix(sites.syl[c("X", "Y")])
+sites.mat.syl
+#Get geographic distance in meters
+geo.dist.syl <-pointDistance(sites.mat.syl,longlat=F)
+Dgeo.syl <-as.dist(geo.dist.syl)
+
+# Mantel test
+ibd.syl <- mantel.randtest(Dgen.syl,Dgeo.syl)
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = Dgen.syl, m2 = Dgeo.syl)
+#Observation: 0.3116344 
+#Based on 999 replicates
+#Simulated p-value: 0.043 
+#Alternative hypothesis: greater 
+#    Std.Obs Expectation    Variance 
+#1.838319733 0.000484225 0.028648241 
+
+plot(ibd.syl)
+plot(Dgeo.syl, Dgen.syl)
+abline(glm(Dgen.syl~Dgeo.syl), col="red",lty=2)
+
+dens.syl <- kde2d(Dgeo.syl,Dgen.syl, n=300)
+myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+plot(Dgeo.syl, Dgen.syl, pch=20,cex=.5)
+image(dens.syl, col=transp(myPal(300),.7), add=TRUE)
+abline(glm(Dgen.syl~Dgeo.syl), col="red",lty=2)
+title("Isolation by distance plot")
+
+# correlograms 
+plot(mgram(Dgen.syl, Dgeo.syl))
+
+#$mgram
+ #         lag ngroup      mantelr  pval        llim          ulim
+#[1,]  7259.67      6  0.314929838 0.031  0.10654025  5.159934e-01
+#[2,] 21779.01      9  0.256346077 0.089  0.14020955  3.940264e-01
+#[3,] 36298.35     14 -0.291876131 0.060 -0.47245259 -1.015560e-01
+#[4,] 50817.69     11 -0.074106309 0.629 -0.33225450  1.271204e-01
+#[5,] 65337.03      1  0.003057791 1.000 -0.03117159  2.767909e-02
+#[6,] 79856.37      3 -0.116074236 0.443 -0.26504078  2.460935e-17
+
+```
+
+Mantel test (IBD) + correlograms with the data frame from regression models.
+
+```{r}
+
+
+gengeo_data <- read_csv("./pair.gen.geo.dist.csv", col_names = T)
+
+
+##### subset data frame in domestic pairwise populations
+
+dom.df <- filter(gengeo_data, habitat == "Domicile")
+
+dom.mod <- gls(gen_dist ~ geo_dist_km, correlation=corMLPE(form=~pop1.hab+pop2.hab), data=dom.df)
+
+mycol <- c("royalblue3","chartreuse3")
+
+## Add a column with model predicted values and standard errors 
+# (to calculate confidence intervals)
+dom.df <- bind_cols(dom.df, 
+                         setNames(as_tibble(predictSE.gls(dom.mod, dom.df, 
+                                                          se.fit = TRUE)[1:2]),
+                                  c('fit_link','se_link')))
+
+## Calculate confidence intervals for each correlation from model 
+# predicted values and standard errors 
+dom.df <- mutate(dom.df,
+                         fit_resp  = fit_link,
+                         right_upr = fit_link + (2 * se_link),
+                         right_lwr = fit_link - (2 * se_link))
+
+ggplot(dom.df, aes(geo_dist_km, gen_dist, shape = habitat, colour = habitat, fill = habitat))+
+  geom_point(size=4, alpha=0.7) +
+  geom_line(aes(y=fit_resp), size = 1) +
+  geom_ribbon(data = dom.df,
+              aes(ymin = right_lwr, ymax = right_upr),
+              alpha = 0.3) +
+  scale_color_manual(values = mycol)+
+  scale_fill_manual(values = mycol) +
+  theme_bw() +
+  theme(legend.position = "none") + 
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')')) +
+  font("xlab", size = 18, face = "bold") +
+  font("ylab", size = 18, face = "bold")
+
+
+ibd.dom <- ggplot(dom.df, aes(geo_dist_km, gen_dist, shape = habitat, colour = habitat, fill = habitat))+
+  geom_point(size=4, alpha=0.7) +
+  geom_smooth(method="glm", alpha=0.5, size=2) +
+  scale_color_manual(values = mycol)+
+  scale_fill_manual(values = mycol) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')')) +
+  font("xlab", size = 14, face = "bold") +
+  font("ylab", size = 18, face = "bold")
+
+# Create a mantel correlogram inset
+
+mgram.dom <- mgram(Dgen.dom, Dgeo.dom)
+
+mgram.dom.df <- as_data_frame(mgram.dom$mgram)
+mgram.dom.df <- mutate(mgram.dom.df, lag.km = lag/1000)
+cols = c("black", "white")
+
+mgram.inset.dom <- ggplot(mgram.dom.df, aes(lag.km, mantelr)) +
+  geom_line(colour="royalblue3", size=1.5) +
+  geom_point(aes(fill = cut(pval, c(0, 0.05, 1))), size = 5, pch=21) +
+  scale_fill_manual(values = cols) +
+  theme_bw() +
+  theme(legend.position = "none")  +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Mantel correlation ('*r[m]*')')) +
+  ylim(c(-0.28,0.32)) +
+   theme(axis.text.x = element_text( size=18,face="bold"), 
+         axis.text.y = element_text(size=18,face="bold")) + 
+   theme(axis.title.x = element_text(size=25, face="bold"),
+         axis.title.y = element_text( size=28, face="bold")) +
+  geom_hline(yintercept=0, lty="dashed")
+
+
+ibd.dom + annotation_custom(ggplotGrob(mgram.inset.dom), xmin = 65, xmax = 100, ymin = 0.01, ymax = 0.13)
+
+##### Sylvatic data frame, mantel test (IBD) and correlogram
+
+syl.df <- filter(gengeo_data, habitat == "Sylvatic")
+
+ibd.syl <- ggplot(syl.df, aes(geo_dist_km, gen_dist, shape = habitat, colour = habitat, fill = habitat))+
+  geom_point(size=4, alpha=0.7) +
+  geom_smooth(method="glm", alpha=0.5, size=2) +
+  scale_color_manual(values = "chartreuse3")+
+  scale_fill_manual(values = "chartreuse3") +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')')) +
+  font("xlab", size = 14, face = "bold") +
+  font("ylab", size = 18, face = "bold")
+
+# Create a mantel correlogram inset
+
+mgram.syl <- mgram(Dgen.syl, Dgeo.syl)
+
+mgram.syl.df <- as_data_frame(mgram.syl$mgram)
+mgram.syl.df <- mutate(mgram.syl.df, lag.km = lag/1000)
+cols = c("black", "white")
+
+mgram.inset.syl <- ggplot(mgram.syl.df, aes(lag.km, mantelr)) +
+  geom_line(colour="chartreuse3", size=1.5) +
+  geom_point(aes(fill = cut(pval, c(0, 0.05, 1))), size = 5, pch=21) +
+  scale_fill_manual(values = cols) +
+  theme_bw() +
+  theme(legend.position = "none")  +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Mantel correlation ('*r[m]*')')) +
+  ylim(c(-0.30,0.32)) +
+   theme(axis.text.x = element_text( size=18,face="bold"), 
+         axis.text.y = element_text(size=18,face="bold")) + 
+   theme(axis.title.x = element_text(size=25, face="bold"),
+         axis.title.y = element_text( size=28, face="bold")) +
+  geom_hline(yintercept=0, lty="dashed") +
+  theme(axis.title.y = element_blank())
+
+
+ibd.syl + annotation_custom(ggplotGrob(mgram.inset.syl), xmin = 55, xmax = 92, ymin = 0.04, ymax = 0.13)
+
+
+### plot mantel correlograms dom and syl side by side
+
+plot_grid(mgram.inset.dom,  mgram.inset.syl, align = "h", nrow  = 2)
+
+
+
+### Populations IBD
+
+genmat.pop <- read.csv("./rhod.pop.pwFst.csv", header = TRUE, row.names = 1)
+Dgen.matrix.pop <- as.matrix(genmat.pop)
+Dgen.pop <- as.dist(Dgen.matrix.pop)
+sites.pop <- read.csv("./UTMpops.csv")
+sites.mat.pop <- as.matrix(sites.pop[c("X", "Y")])
+geo.dist.pop <- pointDistance(sites.mat.pop, longlat=F)
+D.geo.pop <- as.dist(geo.dist.pop)
+D.geo.pop
+
+# Create a tibble data frames of the pairwise genetic and geographic distances between communties.
+df.Dgen.pop <- as_tibble(df.Dgen.pop <- melt(as.matrix(Dgen.pop), varnames = c("row", "col")))
+df.Dgeo.pop <- as_tibble(df.Dgeo.pop <- melt(as.matrix(D.geo.pop), varnames = c("row", "col")))
+# Add the value of pairwise geographic distances to the pairwise geentic distances dataframe
+df.Dgengeo.pop <- df.Dgen.pop %>% right_join(df.Dgeo.pop, by=c("row","col"))
+
+# Remove zero values for appropriate regression
+new.df.Dgengeo.pop <- df.Dgengeo.pop %>% filter(value.x>0, value.y>0) # remove zero values
+
+#rename coloumns names
+new.df.Dgengeo.pop <- new.df.Dgengeo.pop %>% rename(pop1 = row, pop2 = col, gen_dist = value.x, geo_dist = value.y)
+
+write_csv(new.df.Dgengeo.pop, "pwFst.pop.df.csv")
+
+new.df.Dgengeo.pop <- mutate(new.df.Dgengeo.pop, geo.dist.km = geo_dist/1000)
+
+
+ibd.pop <- ggplot(new.df.Dgengeo.pop, aes(geo.dist.km, gen_dist))+
+  geom_point(size=4, alpha=0.7) +
+  geom_smooth(method = "glm", alpha=0.5, size=2) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')')) +
+  font("xlab", size = 14, face = "bold") +
+  font("ylab", size = 18, face = "bold")
+
+
+# Create a mantel correlogram inset
+
+mgram.pop <- mgram(Dgen.pop, D.geo.pop)
+
+mgram.pop.df <- as_data_frame(mgram.pop$mgram)
+mgram.pop.df <- mutate(mgram.pop.df, lag.km = lag/1000)
+cols = c("black", "white")
+
+mgram.inset.pop <- ggplot(mgram.pop.df, aes(lag.km, mantelr)) +
+  geom_line() +
+  geom_point(aes(fill = cut(pval, c(0, 0.05, 1))), size = 4, pch=21) +
+  scale_fill_manual(values = cols) +
+  theme_bw() +
+  theme(legend.position = "none")  +
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Mantel correlation ('*r[m]*')')) +
+  font("xlab", size = 14, face = "bold") +
+  font("ylab", size = 18, face = "bold") +
+  geom_hline(yintercept=0, lty="dashed")
+
+
+ibd.pop + annotation_custom(ggplotGrob(mgram.inset.pop), xmin = 70, xmax = 100, ymin = 0, ymax = 0.12)
+
+
+```
+
+Prepare dataframe for regression models 
+
+```{r}
+
+plot(Dgeo.dom, Dgen.dom, col="royalblue3", cex=1, pch=19)
+points(Dgeo.syl, Dgen.syl, col="chartreuse3", cex=1, pch=19)
+abline(lm(Dgen.dom~Dgeo.dom), col="royalblue3", lty=2)
+abline(lm(Dgen.syl~Dgeo.syl), col="chartreuse3", lty=2)
+
+# Create a tibble data frames of the pairwise genetic and geographic distances between communties.
+df.Dgen.dom <- as_tibble(df.Dgen.dom <- melt(as.matrix(Dgen.dom), varnames = c("row", "col")))
+df.Dgeo.dom <- as_tibble(df.Dgeo.dom <- melt(as.matrix(Dgeo.dom), varnames = c("row", "col")))
+# Add the value of pairwise geographic distances to the pairwise geentic distances dataframe
+df.Dgengeo <- df.Dgen.dom %>% right_join(df.Dgeo.dom, by=c("row","col"))
+# Add a new column with a cotegorical variable called Habitat
+df.Dgengeo <- mutate(df.Dgengeo, habitat = "Domicile")
+
+df.Dgen.syl <- as_tibble(df.Dgen.syl <- melt(as.matrix(Dgen.syl), varnames = c("row", "col")))
+df.Dgeo.syl <- as_tibble(df.Dgeo.syl <- melt(as.matrix(Dgeo.syl), varnames = c("row", "col")))
+df.Dgengeo.syl <- df.Dgen.syl %>% right_join(df.Dgeo.syl, by=c("row","col"))
+df.Dgengeo.syl <- mutate(df.Dgengeo.syl, habitat = "Sylvatic") 
+
+# Stack domicile and sylvatic data frames on top of each other.
+df.Dgengeo.domsyl <- as_tibble(Stack(df.Dgengeo, df.Dgengeo.syl))
+# Remove zero values for appropriate regression
+new.df.Dgengeo.domsyl <- df.Dgengeo.domsyl %>% filter(value.x>0, value.y>0) # remove zero values
+
+new.df.Dgengeo.domsyl <- new.df.Dgengeo.domsyl %>% rename(pop1 = row, pop2 = col, gen_dist = value.x, geo_dist = value.y)
+
+write_csv(new.df.Dgengeo.domsyl, "pair.gen.geo.dist.csv")
+
+```
+
+
+Linear regression model - ancova
+
+
+```{r}
+
+mycol <- c("royalblue3","chartreuse3")
+
+wcFst <-ggplot(new.df.Dgengeo.domsyl, aes(value.y, value.x, shape=habitat, colour= habitat, fill=habitat))+
+  geom_point(size=4, alpha=0.7) +
+  geom_smooth(method="lm", alpha=0.5, size=2) + 
+  scale_color_manual(values =mycol)+
+  scale_fill_manual(values = mycol) +
+  theme_bw() + 
+  xlab("Geographic distance (m)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')'))
+
+rousset.Fst <-ggplot(new.df.Dgengeo.domsyl, aes(value.y, (value.x/(1-value.x)), shape=habitat, colour= habitat, fill=habitat))+
+  geom_point(size=4, alpha=0.7) +
+  geom_smooth(method="lm", alpha=0.5, size=2) + 
+  scale_color_manual(values =mycol)+
+  scale_fill_manual(values = mycol) +
+  theme_bw() + 
+  xlab("Geographic distance (m)") +
+  ylab(bquote('Genetic distance ('*F[ST]/(1-F[ST])*')'))
+
+domsyl.m1 <- lm(formula=value.x~value.y*habitat, data = new.df.Dgengeo.domsyl)
+domsyl.m2 <- lm(formula=value.x~value.y+habitat, data = new.df.Dgengeo.domsyl)
+domsyl.m3 <- lm(formula=value.x~value.y, data = new.df.Dgengeo.domsyl)
+
+summary(domsyl.m1)
+summary(domsyl.m2)
+summary(domsyl.m3)
+
+anova(domsyl.m2)
+#Analysis of Variance Table
+
+#Model 1: value.x ~ value.y + habitat
+#Model 2: value.x ~ value.y * habitat
+#  Res.Df    RSS Df Sum of Sq      F Pr(>F)
+#1    549 2.5074                           
+#2    548 2.4999  1 0.0075419 1.6533 0.1991
+
+domsyl.r.m1 <- lm(formula=(value.x/(1-value.x))~value.y*habitat, data = new.df.Dgengeo.domsyl)
+domsyl.r.m2 <- lm(formula=(value.x/(1-value.x))~value.y+habitat, data = new.df.Dgengeo.domsyl)
+summary(domsyl.r.m1)
+summary(domsyl.r.m2)
+anova(domsyl.r.m2, domsyl.r.m1 )
+
+#Analysis of Variance Table
+
+#Model 1: (value.x/(1 - value.x)) ~ value.y + habitat
+#Model 2: (value.x/(1 - value.x)) ~ value.y * habitat
+#    Res.Df    RSS Df Sum of Sq      F Pr(>F)
+#1    549 6.3538                           
+#2    548 6.3275  1  0.026342 2.2813 0.1315
+
+```
+
+Linear mixed-effects model 
+
+
+```{r}
+
+gengeo_data <- read_csv("./pair.gen.geo.dist.csv", col_names = T)
+
+gengeo_data$pop1.hab <- paste(gengeo_data$habitat, gengeo_data$pop1, sep = "-")
+gengeo_data$pop2.hab <- paste(gengeo_data$habitat, gengeo_data$pop2, sep = "-")
+gengeo_data$geo_dist_km <- as.double(round(gengeo_data$geo_dist/1000, digits =1))
+
+lmemod1 <- lme(gen_dist ~ geo_dist, random = ~geo_dist|habitat, correlation=corMLPE(form=~pop1+pop2|habitat), data=gengeo_data)
+
+lmemod2 <- gls(gen_dist ~ geo_dist_km, correlation=corMLPE(form=~pop1.hab+pop2.hab), data=gengeo_data)
+
+lmemod3 <- gls(gen_dist ~ geo_dist_km + habitat, correlation=corMLPE(form=~pop1.hab+pop2.hab), data=gengeo_data)
+#summary(lmemod3)
+#Generalized least squares fit by REML
+#  Model: gen_dist ~ geo_dist_km + habitat 
+#  Data: gengeo_data 
+ #       AIC       BIC   logLik
+#  -1851.935 -1830.394 930.9674
+
+#Correlation Structure: corMLPE
+# Formula: ~pop1.hab + pop2.hab 
+# Parameter estimate(s):
+#      rho 
+#0.3456614 
+
+#Coefficients:
+#                     Value  Std.Error   t-value p-value
+#(Intercept)      0.1084149 0.01834888  5.908532  0.0000
+#geo_dist_km      0.0019010 0.00011285 16.845851  0.0000
+#habitatSylvatic -0.0042290 0.03218032 -0.131416  0.8955
+
+# Correlation: 
+#                (Intr) g_dst_
+#geo_dist_km     -0.219       
+#habitatSylvatic -0.542 -0.005
+
+#Standardized residuals:
+ #      Min         Q1        Med         Q3        Max 
+#-2.1432625 -0.6319959 -0.2008772  0.6184771  2.2171929 
+
+#Residual standard error: 0.07103711 
+#Degrees of freedom: 552 total; 549 residual
+rsquared(lmemod3)
+# 0.2564392
+
+anova(lmemod3)
+#Denom. DF: 549 
+#            numDF   F-value p-value
+#(Intercept)     1 139.49374  <.0001
+#geo_dist_km     1 283.76738  <.0001
+#habitat         1   0.01727  0.8955
+
+lmemod4 <- gls(gen_dist ~ geo_dist_km * habitat, correlation=corMLPE(form=~pop1.hab+pop2.hab), data=gengeo_data)
+#Generalized least squares fit by REML
+#  Model: gen_dist ~ geo_dist_km * habitat 
+#  Data: gengeo_data 
+#        AIC      BIC   logLik
+#  -1866.328 -1840.49 939.1638
+
+#Correlation Structure: corMLPE
+# Formula: ~pop1.hab + pop2.hab 
+# Parameter estimate(s):
+#      rho 
+#0.3771037 
+
+#Coefficients:
+#                                  Value  Std.Error   t-value p-value
+#(Intercept)                  0.11696273 0.02062838  5.669991  0.0000
+#geo_dist_km                  0.00166108 0.00011759 14.125935  0.0000
+#habitatSylvatic             -0.07167028 0.03812622 -1.879816  0.0607
+#geo_dist_km:habitatSylvatic  0.00182716 0.00031929  5.722646  0.0000
+
+# Correlation: 
+#                            (Intr) g_dst_ hbttSy
+#geo_dist_km                 -0.203              
+#habitatSylvatic             -0.541  0.110       
+#geo_dist_km:habitatSylvatic  0.075 -0.368 -0.309
+
+#Standardized residuals:
+#       Min         Q1        Med         Q3        Max 
+#-2.7889540 -0.6507613 -0.1701553  0.6010450  2.0827449 
+
+#Residual standard error: 0.07684065 
+#Degrees of freedom: 552 total; 548 residual
+
+intervals(lmemod4)
+
+#Approximate 95% confidence intervals
+
+# Coefficients:
+#                                   lower         est.       upper
+#(Intercept)                  0.076442354  0.116962734 0.157483115
+#geo_dist_km                  0.001430100  0.001661085 0.001892069
+#habitatSylvatic             -0.146561704 -0.071670282 0.003221139
+#geo_dist_km:habitatSylvatic  0.001199983  0.001827155 0.002454328
+#attr(,"label")
+#[1] "Coefficients:"
+
+# Correlation structure:
+#        lower      est.     upper
+#rho 0.3200792 0.3771037 0.4205414
+#attr(,"label")
+#[1] "Correlation structure:"
+
+# Residual standard error:
+#     lower       est.      upper 
+#0.06291271 0.07684065 0.09385203 
+
+
+
+write.csv(gengeo_data, file = "gengeo_data.csv")
+
+mycol <- c("royalblue3","chartreuse3")
+
+
+## add fit and se.fit on the **link** scale
+gengeo_data <- bind_cols(gengeo_data, setNames(as_tibble(predictSE.gls(lmemod5, gengeo_data, se.fit = TRUE)[1:2]),
+                                                     c('fit_mod5','se_mod5')))
+
+
+
+## create the interval and backtransform
+gengeo_data <- mutate(gengeo_data,
+                         fit_resp  = fit_mod5,
+                         right_upr = fit_mod5 + (2 * se_mod5),
+                         right_lwr = fit_mod5 - (2 * se_mod5))
+
+
+# with ggeffects
+
+plot(ggemmeans(lmemod4, terms = c("geo_dist_km", "habitat")))
+
+
+
+ggplot(gengeo_data, aes(geo_dist_km, gen_dist, shape=habitat, colour= habitat, fill=habitat))+
+  geom_point(size=4) +
+  scale_shape_manual(values=c(21,23)) +
+  geom_line(aes(y=fit_resp), size = 1) +
+  geom_ribbon(data = gengeo_data,
+              aes(ymin = right_lwr, ymax = right_upr),
+              alpha = 0.2,  colour = NA) +
+  scale_color_manual(values = mycol) +
+  scale_fill_manual( values = mycol) +
+  theme_bw() + 
+  xlab("Geographic distance (Km)") +
+  ylab(bquote('Genetic distance ('*F[ST]*')')) +
+  guides(fill = guide_legend(ncol = 1))  +
+   theme(axis.text.x = element_text( size=18,face="bold"), 
+         axis.text.y = element_text(size=18,face="bold")) + 
+   theme(axis.title.x = element_text(size=25, face="bold"),
+         axis.title.y = element_text( size=28, face="bold")) +
+  theme(legend.position = "none") 
+
+
+
+
+# Plot residuals
+residplot(lmemod4)
+
+
+```
+
+Domicile mantel test with Hendrick Gst matrix
+```{r}
+
+genmat.dom <- read.csv("./rhod.dom.pwGst.csv", header = TRUE, row.names = 1)
+Dgen.matrix.dom <- as.matrix(genmat.dom)
+Dgen.dom <- as.dist(Dgen.matrix.dom)
+
+#Create a matrix of site locations
+sites.dom <- read.csv ("UTMdom.csv")
+sites.mat.dom <-as.matrix(sites.dom[c("X", "Y")])
+sites.mat.dom
+#Get geographic distance in meters
+geo.dist.dom <-pointDistance(sites.mat.dom,longlat=F)
+Dgeo.dom <-as.dist(geo.dist.dom)
+
+# Mantel test
+ibd.dom <- mantel.randtest(Dgen.dom,Dgeo.dom)
+
+#Monte-Carlo test
+#Call: mantel.randtest(m1 = Dgen.dom, m2 = Dgeo.dom)
+
+#Observation: 0.4717461 
+
+#Based on 999 replicates
+#Simulated p-value: 0.001 
+#Alternative hypothesis: greater 
+
+#     Std.Obs  Expectation     Variance 
+# 3.819369744 -0.005170374  0.015591979
+
+plot(ibd.dom)
+plot(Dgeo.dom, Dgen.dom)
+abline(glm(Dgen.dom~Dgeo.dom), col="red",lty=2)
+
+dens.dom <- kde2d(Dgeo.dom,Dgen.dom, n=300)
+myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+plot(Dgeo.dom, Dgen.dom, pch=20,cex=.5)
+image(dens.dom, col=transp(myPal(300),.7), add=TRUE)
+abline(glm(Dgen.dom~Dgeo.dom), col="red",lty=2)
+
+
+# correlograms 
+plot(mgram(Dgen.dom, Dgeo.dom))
+
+#$mgram
+#           lag ngroup     mantelr  pval        llim          ulim
+# [1,]  5358.31     28  0.27667103 0.001  0.21724984  3.901866e-01
+# [2,] 16074.93     31  0.24023134 0.005  0.18713014  2.939219e-01
+# [3,] 26791.55     48  0.12419721 0.182  0.03124524  2.220211e-01
+# [4,] 37508.17     47 -0.23232491 0.002 -0.33317557 -1.120278e-01
+# [5,] 48224.79     39 -0.19201352 0.022 -0.26257176 -1.083473e-01
+# [6,] 58941.41     19  0.04566118 0.585 -0.03674024  1.259654e-01
+# [7,] 69658.04      4 -0.01115473 0.887 -0.03884384  1.110006e-02
+# [8,] 80374.66      7 -0.11905397 0.273 -0.15630914  3.032338e-17
+# [9,] 91091.28      7 -0.25549826 0.021 -0.30267904  5.719991e-18
+
+
+
+
+# Sylvatic mantel test with Hendricks Gst matrix.
+
+# Pairwise Fst matrix
+genmat.syl <- read.csv("rhod.syl.pwGst.csv", header = TRUE, row.names = 1)
+Dgen.matrix.syl <- as.matrix(genmat.syl)
+Dgen.syl <- as.dist(Dgen.matrix.syl)
+
+#Create a matrix of site locations
+sites.syl <- read.csv ("UTMsyl.csv")
+sites.mat.syl <-as.matrix(sites.syl[c("X", "Y")])
+sites.mat.syl
+#Get geographic distance in meters
+geo.dist.syl <-pointDistance(sites.mat.syl,longlat=F)
+Dgeo.syl <-as.dist(geo.dist.syl)
+
+# Mantel test
+ibd.syl <- mantel.randtest(Dgen.syl,Dgeo.syl)
+
+plot(ibd.syl)
+plot(Dgeo.syl, Dgen.syl)
+abline(glm(Dgen.syl~Dgeo.syl), col="red",lty=2)
+
+dens.syl <- kde2d(Dgeo.syl,Dgen.syl, n=300)
+myPal <- colorRampPalette(c("white","blue","gold", "orange", "red"))
+plot(Dgeo.syl, Dgen.syl, pch=20,cex=.5)
+image(dens.syl, col=transp(myPal(300),.7), add=TRUE)
+abline(glm(Dgen.syl~Dgeo.syl), col="red",lty=2)
+title("Isolation by distance plot")
+
+# correlograms 
+plot(mgram(Dgen.syl, Dgeo.syl))
+
+#$mgram
+#          lag ngroup     mantelr  pval        llim          ulim
+#[1,]  7259.67      6  0.37529144 0.009  0.10821254  5.702839e-01
+#[2,] 21779.01      9  0.16849124 0.338  0.02946252  3.252022e-01
+#[3,] 36298.35     14 -0.24897970 0.099 -0.43987982 -4.853562e-02
+#[4,] 50817.69     11 -0.10678453 0.485 -0.34985600  1.068986e-01
+#[5,] 65337.03      1 -0.03667396 0.965 -0.07074864  8.330271e-17
+#[6,] 79856.37      3 -0.07906545 0.657 -0.24578835  1.194972e-02
+
+
+
+
+```
+
+Correlation Fst dom syl pairs vs geographic distances
+
+
+```{r}
+
+gen.dist <- c(0.05, 0.08, 0.06, 0.06, 0.06, 0.03, 0.10)
+geo.dist <- c(0.892065, 1.853765, 0.1040141, 0.9685069, 3.188121, 0.582964, 0.2456451)
+pop <- c("CG", "BR", "CE", "CQ", "HY", "SJ", "GL")
+domsyl.df <- data.frame(gen.dist, geo.dist, pop)
+
+ggplot(domsyl.df, aes(x = geo.dist, y= gen.dist)) + 
+  geom_point() + 
+  geom_smooth(method = "lm", alpha=0.5, size=2) + 
+  theme_bw() + 
+  xlab("Geographic distance (Km)") + 
+  ylab(bquote('Genetic distance ('*F[ST]*')'))
+
+ibd.domsyl <- mantel(formula = as.matrix(gen.dist) ~ as.matrix(geo.dist), data = domsyl.df)
+
+perm.cor.test(domsyl.df$gen.dist, domsyl.df$geo.dist, alternative = "greater", num.sim = 10000)
+
+
+```
+
+DAPC with RF SNPS
+
+```{r}
+
+rhod.rf.vcf <- read.vcfR("./snps.loja.KNNimpR3.rf.recode.vcf")
+
+# Convert vcf to genind object
+rhod.rf.genind <- vcfR2genind(rhod.rf.vcf, sep = "/")
+
+# Add population map from sample information file.
+rhod.info <- read.csv("./C02KNNimpR3_strata.csv")
+popmap <- as.factor(as.vector(rhod.info$pop))
+rhod.rf.genind@pop <- popmap
+rhod.rf.genind
+
+strata(rhod.rf.genind) <- rhod.info
+rhod.rf.genind
+
+# Remove communities without samples collected in both habitats (domicile and sylvatic).
+rhod.rf.domsyl <- popsub(rhod.rf.genind, blacklist=c("SF", "LM", "AH", "ND", "HG", "TC", "VC", "BM", "GA", "EX", "YS", "TR", "SS", "AZ", "NJ", "NT", "RT", "TM"))
+# Change the population map with the approrpiate domicile and sylvatic category.
+popmap.hab <- as.factor(as.vector(rhod.domsyl@strata$hab))
+rhod.rf.domsyl@pop <- popmap.hab
+
+
+
+par(mfrow = c(1,2))
+rhod.rf.domsyl.clust <- find.clusters(rhod.rf.domsyl, max.n.clust = 20) # this is the good clustering
+15
+10
+
+rhod.domsyl.dapc <- dapc(rhod.rf.domsyl, rhod.rf.domsyl.clust$grp) # this is the good dapc
+10
+3
+rhod.rf.domsyl.dapc$grp
+
+cols <- c("royalblue3", "chartreuse3")
+myPal <- colorRampPalette(c("blue","gold","red"))
+
+# domsyl
+
+scatter(rhod.domsyl.dapc, grp=rhod.rf.domsyl@strata$hab, posi.da="bottomleft", col=cols, xax=1, yax=2, 
+        clab=0.8, solid=0.7, cex=3, pch=19, bg="white", cstar=0, cellipse=0, label = NULL, 
+        leg=F, txt.leg=paste("Cluster",1:5))
+# time
+par(new=TRUE)
+df.rhod.domsyl <- data.frame(x = rhod.domsyl.dapc$ind.coord[,1], y = rhod.domsyl.dapc$ind.coord[,3])
+noms.rhod.domsyl <- rhod.domsyl@strata$coltime
+s.label(dfxy = df.rhod.domsyl, xax=1, yax=2, label=noms.rhod.domsyl,
+        clabel=0.7, 
+        boxes=FALSE,
+        neig = TRUE,
+        grid=FALSE, addaxes=TRUE) # do not draw lines or axes in addition to the labels
+
+# Explore population
+par(new=TRUE)
+df.rhod.domsyl <- data.frame(x = rhod.domsyl.dapc$ind.coord[,1], y = rhod.domsyl.dapc$ind.coord[,3])
+noms.rhod.domsyl <- rhod.domsyl@strata$pop
+s.label(dfxy = df.rhod.domsyl, xax=1, yax=2, label=noms.rhod.domsyl,
+        clabel=0.8, 
+        boxes=FALSE,
+        neig = TRUE,
+        grid=FALSE, addaxes=TRUE)
+
+
+
+
+
+
+
+```

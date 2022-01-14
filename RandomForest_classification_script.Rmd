@@ -1,0 +1,320 @@
+---
+title: "RandomForest_classification_script"
+author: "Arne Jacobs"
+date: "19/07/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages("randomForest")
+install.packages("tidyverse")
+library(randomForest)
+library(tidyverse)
+library(ggpubr)
+```
+
+## Random forest without population structure correction: (does not work as well)
+```{r}
+geno <- read_delim("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/KNNimpR3.domsylV2.genomat.012", delim = "\t", col_names = F)
+phen <- read_csv("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/domsyl.ipca.csv")
+
+#Create matrix with all loci (select from first column with SNP info to last one in file)
+gen <- geno[,2:2553]
+gen <- as.matrix(gen)
+
+#Impute missing data using na.roughfix function
+gen.imputed <- na.roughfix(gen)
+gen.imputed.dataset <- cbind(phen, gen.imputed)
+str(gen.imputed.dataset)
+
+#RF test
+gen.imputed.dataset[] <- lapply(gen.imputed.dataset, factor) #make factor for classification
+
+genotypes <- gen.imputed.dataset[,6:2557]
+genotypes <- as.matrix(genotypes)
+
+rf1.test <- randomForest(genotypes, gen.imputed.dataset$hab, proximity=TRUE, importance=TRUE, ntree=5000)
+#Call:
+# randomForest(x = genotypes, y = gen.imputed.dataset$hab, ntree = 5000,      importance = TRUE, proximity = TRUE) 
+#               Type of random forest: classification
+#                     Number of trees: 5000
+#No. of variables tried at each split: 50
+
+#        OOB estimate of  error rate: 23.15%
+#Confusion matrix:
+#    dom syl class.error
+#dom  48   8   0.1428571
+#syl  17  35   0.3269231
+
+rf1.test$err.rate
+plot(rf1.test)
+plot(rf1.test$err.rate[,1])
+varImpPlot(rf1.test)
+MDSplot(rf1.test, gen.imputed.dataset$hab)
+
+```
+
+## Random forest with population structure correction:
+```{r}
+
+
+geno <- read_delim("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/KNNimpR3.domsylV2.genomat.012", delim = "\t", col_names = F)
+phen <- read_csv("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/domsyl.ipca.csv")
+SNPid <- read_delim("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/KNNimpR3.domsylV2.genomat.012.pos",delim = "\t", col_names = F)
+
+
+ggplot(data = phen) +
+  geom_point(aes(x=Axis1, y=Axis2, colour = hab))
+
+ggplot(data = phen) +
+  geom_point(aes(x=Axis2, y=Axis3, colour = hab))
+
+#Create matrix with all loci (select from first column with SNP info to last one in file)
+gen <- geno[,2:2553]
+gen <- as.matrix(gen)
+
+#Impute missing data using na.roughfix function
+gen.imputed <- na.roughfix(gen)
+str(gen.imputed)
+
+#Correct for pop structure:
+pc1 <- phen$Axis1
+pc2 <- phen$Axis2
+pc3 <- phen$Axis3
+
+gen.fit <- lm(gen.imputed ~ pc1 + pc2 + pc3)
+resid.gen <- residuals(gen.fit)
+plot(resid.gen)
+
+gen.resid.dataset <- cbind(phen, resid.gen)
+str(gen.resid.dataset)
+write_csv(gen.resid.dataset, "C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/gen.resid.dataset.csv")          
+
+#RF test
+gen.resid.dataset[] <- lapply(gen.resid.dataset, factor) #make factor for classification
+str(gen.resid.dataset)
+genotypes <- gen.resid.dataset[,6:2557]
+genotypes <- as.matrix(genotypes)
+
+rf1.test <- randomForest(genotypes, gen.resid.dataset$hab, proximity=TRUE, importance=TRUE, ntree=10000)
+rf1.test
+#Call:
+# randomForest(x = genotypes, y = gen.resid.dataset$hab, ntree = 10000,      importance = TRUE, proximity = TRUE) 
+#               Type of random forest: classification
+#                     Number of trees: 10000
+#No. of variables tried at each split: 50
+#        OOB estimate of  error rate: 23.15%
+#Confusion matrix:
+#    dom syl class.error
+#dom  44  12   0.2142857
+#syl  13  39   0.2500000
+
+
+plot(rf1.test)
+plot(rf1.test$err.rate[,1])
+varImpPlot(rf1.test)
+MDSplot(rf1.test, gen.resid.dataset$hab)
+
+```
+
+
+```{r}
+#Run randomForest analysis three times 
+rf1 <- randomForest(genotypes, gen.resid.dataset$hab, proximity=TRUE, importance=TRUE, ntree=10000)
+rf2 <- randomForest(genotypes, gen.resid.dataset$hab, proximity=TRUE, importance=TRUE, ntree=10000)
+rf3 <- randomForest(genotypes, gen.resid.dataset$hab, proximity=TRUE, importance=TRUE, ntree=10000)
+rf.initial <- randomForest::combine(rf1,rf2,rf3)
+
+#Results (just to check)
+print(rf1)
+#        OOB estimate of  error rate: 25%
+#Confusion matrix:
+#    dom syl class.error
+#dom  44  12   0.2142857
+#syl  15  37   0.2884615
+print(rf2)
+#OOB estimate of  error rate: 23.15%
+#Confusion matrix:
+#    dom syl class.error
+#dom  45  11   0.1964286
+#syl  14  38   0.2692308
+print(rf3)
+# OOB estimate of  error rate: 24.07%
+#Confusion matrix:
+#    dom syl class.error
+#dom  44  12   0.2142857
+#syl  14  38   0.2692308
+
+
+plot(rf1$err.rate[,1])
+plot(rf2$err.rate[,1])
+plot(rf3$err.rate[,1])
+
+rf.importance <- importance(rf.initial,  type=1, scale=TRUE)
+rf.importance <- as_tibble(rf.importance)
+
+#Add SNPnames:
+SNPid <- unite(SNPid, "SNPid", c("X1","X2"), sep="_", remove = T)
+rf.importance <- as_tibble(cbind(SNPid,rf.importance))
+write_csv(rf.importance, "C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/rf.importance.csv")          
+
+rf.imp.df <- as_tibble(cbind(importance(rf1,  type=1, scale=TRUE), importance(rf2,  type=1, scale=TRUE),importance(rf3,  type=1, scale=TRUE)))
+cor.test(x = rf.imp.df$MeanDecreaseAccuracy, y= rf.imp.df$V2, method = "pearson")
+#Pearson's product-moment correlation
+
+#data:  rf.imp.df$MeanDecreaseAccuracy and rf.imp.df$V2
+#t = 59.032, df = 2550, p-value < 2.2e-16
+#alternative hypothesis: true correlation is not equal to 0
+#95 percent confidence interval:
+# 0.7430065 0.7758260
+#sample estimates:
+#      cor 
+#0.7599001 
+
+#data:  rf.imp.df$MeanDecreaseAccuracy and rf.imp.df$V3
+#t = 54.911, df = 2550, p-value < 2.2e-16
+#alternative hypothesis: true correlation is not equal to 0
+#95 percent confidence interval:
+# 0.7177655 0.7533524
+#sample estimates:
+#      cor 
+#0.7360671 
+
+###Select top subset of SNPs based on importance distribution (upper end of elbow -> %IncMSE=20 -> 84 SNPs) -> extended topsubset of 150 SNPs for backwards purging approach
+
+#Plotting the importance distribution
+rf.importance <- read_csv("./rf.importance.csv")
+rf.importance.ord <- arrange(rf.importance, -MeanDecreaseAccuracy)
+rf.importance.ord <- rownames_to_column(rf.importance.ord)
+rf.importance.ord <- type_convert(rf.importance.ord, col_types = list(rowname = col_double()))
+  
+           
+accu.inset <- ggplot(data=rf.importance.ord, aes(x=rowname, y=MeanDecreaseAccuracy, color=MeanDecreaseAccuracy)) +
+  geom_point(colour= "black" , shape = 19, size = 2, alpha = 1/3) +
+  geom_hline(yintercept = 3, linetype= 2, size = 1.5, colour="firebrick") +
+  geom_hline(yintercept = 0, size = 1.5, colour="gray") +
+  theme(panel.grid.minor=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.background=element_rect(colour = "black", size = 0.5, fill = "NA"),
+        axis.text=element_text(size=16, color = "black"),
+        legend.position = "NA") +
+  xlab("SNP ranking") + 
+  ylab("SNP classification accuracy") +
+  theme_bw() +
+   theme(axis.text.x = element_text( size=16,face="bold"), 
+         axis.text.y = element_text(size=16,face="bold")) + 
+   theme(axis.title.x = element_text(size=28, face="bold"),
+         axis.title.y = element_text( size=28, face="bold")) +
+  theme(legend.position = "none") 
+  
+
+
+
+#Use the distribution of SNPs to pick top subset of SNPs (initial top subset are all SNPs above upper end of elbow). Extend top dataset slightly to make analysis more sensitive (usually all SNPs from middle of elbow - avg.Importance value cutoff of 10 in this example)
+# Here we manually copy SNPs IDs from "rf.importance.csv" file created in line 123 and paste it to the "gen.resid.dataset.csv" created at line 84. This is
+# to identify the SNPs above the cut-off value # Enrique 16 Sept 2019
+
+data <- read_csv("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/gen.resid.dataset.csv")
+snp.resid.data <- data[,6:2557]
+
+#Make a list of topsubset SNPs
+top_subset <- subset(rf.importance.ord, MeanDecreaseAccuracy>=3)  #Threshold MDA = 0
+top_SNPs <- top_subset$SNPid
+col.num <- which(colnames(data) %in% top_SNPs)
+data_topSNPs <- as_tibble(data[,sort(c(1,2,col.num))])
+
+write_csv(top_subset, "C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/top_SNPS_meandecreaseaccuracy.csv")
+
+
+data_topSNPs[] <- lapply(data_topSNPs, factor)
+
+d.data_topSNPs <- data_topSNPs[,3:349]
+gen_top <- d.data_topSNPs[,1:347]
+gen_top <- as.matrix(gen_top)
+str(gen_top)
+
+#Backwards purging step to determine subset of SNPs explaining the highest amount of variance. 
+
+# Make a loop which repeats until number of variables is less than or equal to two
+
+repeat{
+  rf.1 <- randomForest(gen_top, data_topSNPs$hab, proximity=TRUE, importance=TRUE, ntree=10000)
+
+  print(rf.1)
+  
+  rf.out1 <- tail(rf.1$err.rate,1)
+  rf1.out <- rf.out1[,1]
+  rf.out2 <- tail(rf.1$err.rate,1)
+  rf2.out <- rf.out2[,1]
+  rf.out3 <- tail(rf.1$err.rate,1)
+  rf3.out <- rf.out3[,1]
+  rf.out <- mean(cbind(rf1.out,rf2.out,rf3.out))
+  
+  rf.imp <- cbind(importance(rf.1,  type=1, scale=TRUE), importance(rf.1,  type=1, scale=TRUE),importance(rf.1,  type=1, scale=TRUE))
+  
+  # moved writing step to after 'n' is defined
+  # so 'n' can be part of the filename, rather than overwriting
+  # "importance_scaled_rf.txt" every time
+  rf.imp.mean <- rowMeans(rf.imp[, -ncol(rf.imp)]) 
+  rf.imp2 <- cbind(rf.imp,rf.imp.mean)
+  rf.imp3 <- rf.imp2[order(-rf.imp.mean),c(1:4)]
+  n <- dim(rf.imp3)[1]
+  write(paste(n,rf.out), "OOB_ErrorRate_rf1.txt", append=T)
+  write.table(rf.imp, paste0("importance_scaled_rf",n,".txt"), quote=F, row.names=T)
+  # break loop if n <= 2
+  if (rf.out < 0.001){
+    break
+  }
+  rf.subset <- rf.imp3[1:(n-1),]
+  rownames <- row.names(rf.subset) 
+  col.num <- which(colnames(d.data_topSNPs) %in% rownames)
+  
+  
+  # set gen_top to the subsetted variables
+  # IMPORTANT: Note this mean gen_top will consist of 2 variables at the end!!!
+  #
+  # Make sure you reset gen_top to whatever it was before if you want to reuse it!
+  #
+  # You can also set a dummy variable, say "dgen_top <- gen_top"
+  # before the start of the loop, and use that for evey occurance of 'gen_top'
+  # in the loop, if you want to avoid this problem.
+  gen_top <- as.matrix(d.data_topSNPs[,sort(c(col.num))])
+}
+
+
+```
+
+```{r}
+# read OOB file
+
+oob_data <- read_csv("C:/Users/quiqu/Dropbox/Recuadoriensis_Analysis/RF_analysis/RFV2_analysis/OOB_ErrorRate_rf1.csv")
+
+P1 <- ggplot(data=oob_data, aes(x=X1, y=X2, colour=X2)) +
+  geom_point(colour= "black", shape = 19, size = 5, alpha=0.7) +
+  geom_smooth() +
+  geom_vline(xintercept = 43, linetype = 2, size = 1.5, colour="firebrick") +
+  geom_vline(xintercept = 24, linetype = 2, size = 1.5, colour="firebrick") +
+  xlab("Ranked SNP subsets") +
+  ylab("OOB error-rate") +
+  theme_bw() +
+   theme(axis.text.x = element_text( size=30,face="bold"), 
+         axis.text.y = element_text(size=30,face="bold")) + 
+   theme(axis.title.x = element_text(size=40, face="bold"),
+         axis.title.y = element_text( size=40, face="bold")) 
+
+png("RFV150421.png", units="in", width = 24, height = 14, res = 360)
+
+P1 + annotation_custom(ggplotGrob(accu.inset), 
+                     xmin= 150, xmax=350, 
+                       ymin = 0.18, ymax = 0.26)
+
+dev.off()
+
+
+```
