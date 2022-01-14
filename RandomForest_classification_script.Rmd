@@ -1,6 +1,6 @@
 ---
 title: "RandomForest_classification_script"
-author: "Arne Jacobs"
+author: "Enrique Hernandez advised by Arne Jacobs"
 date: "19/07/2019"
 output:
   pdf_document: default
