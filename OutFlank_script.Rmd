@@ -1,0 +1,212 @@
+---
+title: "Outlier loci based of trimming Fst neutral distribution"
+author: "Enrique Hernandez"
+date: "27 September 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+
+library(devtools)
+library(qvalue)
+library(OutFLANK)
+library(vcfR)
+library(tidyverse)
+
+```
+
+ Analysis with Outflank
+```{r}
+
+# ead in the SNP data, SPN IDs and the samples population map.
+geno <- read_delim("./KNNimpR3.domsylV2.genomat.012", delim = "\t", col_names = F)
+gen <- geno[,2:2553]
+gen <- as.matrix(gen)
+
+SNPid <- read_delim("./KNNimpR3.domsylV2.genomat.012.pos",delim = "\t", col_names = F)
+SNPid <- unite(SNPid, "SNPid", c("X1","X2"), sep="_", remove = T)
+locinames <- as_vector(SNPid$SNPid)
+head(locinames)
+
+phen <- read_csv("./popmap.domsyl.csv")
+popNames <- as_vector(phen$pop)
+k <- 2
+
+# Run Calculate the variables required by OutFlank
+FstDataFrame <- MakeDiploidFSTMat(gen,locinames,popNames)
+
+#Plot loci to look for loci with low sample ssize or unusual uncorrected Fst values
+plot(FstDataFrame$FST, FstDataFrame$FSTNoCorr, 
+     xlim=c(-0.01,0.3), ylim=c(-0.01,0.3),
+     pch=20)
+abline(0,1)
+
+# Remove SNP with low sample size
+FstDataFrameClean <- FstDataFrame %>% drop_na()
+
+plot(FstDataFrameClean$FST, FstDataFrameClean$FSTNoCorr, 
+     xlim=c(-0.01,0.3), ylim=c(-0.01,0.3),
+     pch=20)
+abline(0,1, col="red")
+
+
+# Checkif Fst distribution look chi-squared distributed
+plot(FstDataFrame$He, FstDataFrame$FSTNoCorr, pch=20, col="grey")
+
+hist(FstDataFrame$FSTNoCorr, breaks=seq(0,0.3, by=0.001))
+
+hist(FstDataFrame$FSTNoCorr[FstDataFrame$He>0.05], breaks=seq(0,0.3, by=0.001))
+hist(FstDataFrame$FSTNoCorr[FstDataFrame$He>0.1], breaks=seq(0,0.3, by=0.001))
+
+# Unclean dataset
+
+outliers <- OutFLANK(FstDataFrame,NumberOfSamples = k,
+                     RightTrimFraction = 0.06, LeftTrimFraction = 0.35,
+                     qthreshold = 0.05, Hmin = 0.10) 
+ 
+OutFLANKResultsPlotter(outliers, withOutliers = TRUE,
+NoCorr = TRUE, Hmin = 0.1, binwidth = 0.001, Zoom =
+FALSE, RightZoomFraction = 0.05, titletext = NULL)
+
+OutFLANKResultsPlotter(outliers, withOutliers = TRUE,
+NoCorr = TRUE, Hmin = 0.1, binwidth = 0.001, Zoom =
+TRUE, RightZoomFraction = 0.1, titletext = NULL)
+
+hist(outliers$results$pvaluesRightTail)
+
+sum(outliers$results$qvalues<0.01, na.rm=TRUE)
+
+plot(outliers$results$He, outliers$results$FST, pch=20, col="grey")
+    points(outliers$results$He[outliers$results$qvalues<0.01], outliers$results$FST[outliers$results$qvalues<0.01], pch=21, col="blue")
+
+## Clean 
+
+outliers.clean <- OutFLANK(FstDataFrameClean,NumberOfSamples = k,
+                     RightTrimFraction = 0.06, LeftTrimFraction = 0.35,
+                     qthreshold = 0.05, Hmin = 0.10) 
+ 
+OutFLANKResultsPlotter(outliers.clean, withOutliers = TRUE,
+NoCorr = TRUE, Hmin = 0.1, binwidth = 0.001, Zoom =
+FALSE, RightZoomFraction = 0.05, titletext = NULL)
+
+OutFLANKResultsPlotter(outliers.clean, withOutliers = TRUE,
+NoCorr = TRUE, Hmin = 0.1, binwidth = 0.001, Zoom =
+TRUE, RightZoomFraction = 0.1, titletext = NULL)
+
+hist(outliers.clean$results$pvaluesRightTail)
+
+sum(outliers.clean$results$qvalues<0.01, na.rm=TRUE)
+
+plot(outliers.clean$results$He, outliers.clean$results$FST, pch=20, col="grey")
+    points(outliers.clean$results$He[outliers.clean$results$qvalues<0.01], outliers.clean$results$FST[outliers.clean$results$qvalues<0.01], pch=21, col="blue")
+    
+# Create logical vector for top candidates
+top_candidates <- outliers.clean$results$qvalues<0.01 & outliers.clean$results$He>0.1
+
+plot(outliers.clean$results$He, outliers.clean$results$FST, pch=20, col="grey")
+    points(outliers.clean$results$He[top_candidates], outliers.clean$results$FST[top_candidates], pch=21, col="blue")
+
+outlier.df <- as_tibble(outliers.clean$results)    
+    
+
+# list top candidates
+    topcan <- outliers.clean$results[top_candidates,]
+    topcan[order(topcan$LocusName),]
+ topcan.df <- as_tibble(topcan)
+ 
+# plot using ggplot
+outflank <- ggplot() +
+  geom_point(data = outlier.df, aes(x=He, y=FST),fill = "gray60", size = 1, shape = 21) +
+  geom_point(data = topcan.df, aes(x=He, y=FST),fill = "purple", size = 5, shape = 23) +
+  xlab("Heterozygosity") +ylab(bquote(''*F[ST]*'')) +
+  ylim(c(0,0.27)) +
+  theme_bw() +
+   theme(axis.text.x = element_text( size=30,face="bold"), 
+         axis.text.y = element_text(size=30,face="bold")) + 
+   theme(axis.title.x = element_text(size=36, face="bold"),
+         axis.title.y = element_text( size=36, face="bold")) +
+  theme(legend.position = "none") 
+
+    
+       
+write.csv(topcan, file = "OutFlank_top.csv") 
+
+```
+
+Analysis with fthet
+
+```{r}
+devtools::install_github("spflanagan/fsthet_analysis/fsthet")
+library(fsthet)
+
+# read data in genepop format
+outfsthet <- my.read.genepop("./KNNimpR3.domsylV2.gen", ncode = 3L, quiet = FALSE)
+
+# Calculate actual values
+fsts<-calc.actual.fst(outfsthet)
+
+
+#Plot the actual values to see what your distribution looks like
+par(mar=c(4,4,1,1))
+plot(fsts$Ht, fsts$Fst,xlab="Ht",ylab="Fst",pch=19)
+
+
+# Generating quantiles
+# 
+# Using boot.out
+quant.out<-fst.boot(outfsthet, bootstrap = FALSE)
+str(quant.out)
+head(quant.out[[3]][[1]])
+
+#
+#Plotting the results
+#
+
+#extract the confidence interavls
+quant.list<-ci.means(quant.out[[3]])
+head(quant.list)
+
+#plot the results
+par(mar=c(4,4,1,1))
+plotting.cis(df=fsts,ci.df=quant.list,make.file=F)
+
+#'Identifying outliers
+#'
+outliers.fsthet <-find.outliers(fsts,boot.out=quant.out)
+head(outliers.fsthet)
+
+write.csv(outliers.fsthet, file = "outliers_fsthet.csv")
+write.csv(fsts, file = "fsthet.Ht.Fst.csv")
+write.csv(quant.list, file = "fsthet.quant.list.csv")
+
+
+fsts <- read_csv("./fsthet.Ht.Fst.csv", col_names = T)
+outliers.fsthet <- read_csv("./outliers_fsthet.csv", col_names=T)
+quant.list<- read_csv("./fsthet.quant.list.csv")
+strong_fsthet <- read_csv("./strong_loci_fsthet.csv", col_names = T)
+
+# Plot the outliers found
+fsthet<- ggplot() +
+  geom_point(data = fsts, aes(x=Ht, y=Fst),fill = "gray60", size = 1, shape = 21) +
+  geom_point(data = outliers.fsthet, aes(x=Ht, y=Fst),fill = "black", size = 3, shape = 21) +
+  geom_point(data = strong_fsthet, aes(x=Ht, y=Fst),fill = "purple", size = 5, shape = 23) +
+  geom_line(data=quant.list,aes(x= LowHet, y=Low), colour= "firebrick", size=1) +
+  geom_line(data=quant.list,aes(x= UppHet, y=Upp), colour= "firebrick", size=1) +
+  xlab("Heterozygosity") +ylab(bquote(''*F[ST]*''))+
+  ylim(c(0,0.27)) +
+  theme_bw() +
+   theme(axis.text.x = element_text( size=30,face="bold"), 
+         axis.text.y = element_text(size=30,face="bold")) + 
+   theme(axis.title.x = element_text(size=36, face="bold"),
+         axis.title.y = element_text( size=36, face="bold")) +
+  theme(legend.position = "none") 
+
+tiff("fsthet_outflank_V020421.tiff", units="in", width = 16, height = 15, res = 360)
+
+plot_grid(outflank, fsthet, align = "h", ncol = 2)
+
+dev.off()
+```
